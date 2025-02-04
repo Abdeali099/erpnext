@@ -478,6 +478,7 @@ frappe.ui.form.on("Payment Entry", {
 			$.each(
 				[
 					"party",
+					"party_name",
 					"party_balance",
 					"paid_from",
 					"paid_to",
@@ -500,6 +501,11 @@ frappe.ui.form.on("Payment Entry", {
 			frm.set_value("contact_email", "");
 			frm.set_value("contact_person", "");
 		}
+
+		if (frm.doc.party_bank_account) {
+			frm.set_value("party_bank_account", "");
+		}
+
 		if (frm.doc.payment_type && frm.doc.party_type && frm.doc.party && frm.doc.company) {
 			if (!frm.doc.posting_date) {
 				frappe.msgprint(__("Please select Posting Date before selecting Party"));
