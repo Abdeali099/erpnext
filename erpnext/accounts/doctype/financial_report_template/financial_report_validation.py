@@ -10,6 +10,7 @@ from typing import Any
 import frappe
 from frappe import _
 from frappe.database.operator_map import OPERATOR_MAP
+import frappe.utils
 
 
 @dataclass
@@ -540,3 +541,6 @@ def extract_reference_codes_from_formula(formula: str, available_codes: list[str
 		if re.search(pattern, formula):
 			found_codes.append(code)
 	return found_codes
+
+def test():
+	print("Running tests...")
