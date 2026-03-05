@@ -544,3 +544,6 @@ def extract_reference_codes_from_formula(formula: str, available_codes: list[str
 
 def test():
 	print("Running tests...")
+
+def test2():
+	print("Running more tests...")
