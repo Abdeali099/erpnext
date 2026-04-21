@@ -3,7 +3,7 @@
 
 
 import frappe
-from frappe import _, msgprint, scrub, unscrub
+from frappe import _, msgprint
 from frappe.core.doctype.user_permission.user_permission import get_permitted_documents
 from frappe.model.document import Document
 from frappe.utils import get_link_to_form, now
@@ -34,6 +34,7 @@ class POSProfile(Document):
 		allow_discount_change: DF.Check
 		allow_partial_payment: DF.Check
 		allow_rate_change: DF.Check
+		allow_warehouse_change: DF.Check
 		applicable_for_users: DF.Table[POSProfileUser]
 		apply_discount_on: DF.Literal["Grand Total", "Net Total"]
 		auto_add_item_to_cart: DF.Check
@@ -274,7 +275,7 @@ def get_child_nodes(group_type, root):
 
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
-def pos_profile_query(doctype, txt, searchfield, start, page_len, filters):
+def pos_profile_query(doctype: str, txt: str, searchfield: str, start: int, page_len: int, filters: dict):
 	user = frappe.session["user"]
 	company = filters.get("company") or frappe.defaults.get_user_default("company")
 
@@ -318,7 +319,7 @@ def pos_profile_query(doctype, txt, searchfield, start, page_len, filters):
 
 
 @frappe.whitelist()
-def set_default_profile(pos_profile, company):
+def set_default_profile(pos_profile: str, company: str):
 	modified = now()
 	user = frappe.session.user
 

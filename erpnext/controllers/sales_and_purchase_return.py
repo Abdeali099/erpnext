@@ -12,7 +12,7 @@ from frappe.utils import cint, flt, format_datetime, get_datetime
 
 import erpnext
 from erpnext.stock.serial_batch_bundle import get_batches_from_bundle
-from erpnext.stock.utils import get_combine_datetime, get_incoming_rate, get_valuation_method
+from erpnext.stock.utils import get_combine_datetime, get_incoming_rate, get_valuation_method, getdate
 
 
 class StockOverReturnError(frappe.ValidationError):
@@ -313,6 +313,68 @@ def get_already_returned_items(doc):
 	return items
 
 
+def get_returned_qty_map_for_purchase_flow(return_against, supplier, row_name, doctype):
+	# return map of warehouses with qty and stock qty
+	# Example: {'_Test Rejected Warehouse - _TC': {'qty': 5.0, 'stock_qty': 5.0}, '_Test Warehouse - _TC': {'qty': 8.0, 'stock_qty': 8.0}}
+
+	parent_doc = frappe.qb.DocType(doctype)
+	child_doc = frappe.qb.DocType(doctype + " Item")
+
+	query = (
+		frappe.qb.from_(parent_doc)
+		.inner_join(child_doc)
+		.on(child_doc.parent == parent_doc.name)
+		.select(
+			child_doc.qty,
+			child_doc.rejected_qty,
+			child_doc.warehouse,
+			child_doc.rejected_warehouse,
+			child_doc.conversion_factor,
+		)
+		.where(
+			(parent_doc.return_against == return_against)
+			& (parent_doc.supplier == supplier)
+			& (parent_doc.docstatus == 1)
+			& (parent_doc.is_return == 1)
+		)
+	)
+
+	if doctype != "Subcontracting Receipt":
+		query = query.select(child_doc.stock_qty)
+
+	doctype_field_map = {
+		"Purchase Receipt": child_doc.purchase_receipt_item,
+		"Subcontracting Receipt": child_doc.subcontracting_receipt_item,
+	}
+
+	field = doctype_field_map.get(doctype)
+	if field:
+		query = query.where(field == row_name)
+
+	data = query.run(as_dict=True)
+
+	_return_map = frappe._dict({})
+
+	for row in data:
+		if row.warehouse and row.warehouse not in _return_map:
+			_return_map[row.warehouse] = frappe._dict({"qty": 0, "stock_qty": 0})
+
+		if row.rejected_warehouse and row.rejected_warehouse not in _return_map:
+			_return_map[row.rejected_warehouse] = frappe._dict({"qty": 0, "stock_qty": 0})
+
+		if row.warehouse:
+			qty_map = _return_map.get(row.warehouse)
+			qty_map.qty += abs(flt(row.qty))
+			qty_map.stock_qty += abs(flt(row.stock_qty))
+
+		if row.rejected_warehouse:
+			rejected_qty_map = _return_map.get(row.rejected_warehouse)
+			rejected_qty_map.qty += abs(flt(row.rejected_qty))
+			rejected_qty_map.stock_qty += abs(flt(row.rejected_qty) * flt(row.conversion_factor))
+
+	return _return_map
+
+
 def get_returned_qty_map_for_row(return_against, party, row_name, doctype):
 	child_doctype = doctype + " Item"
 	reference_field = "dn_detail" if doctype == "Delivery Note" else frappe.scrub(child_doctype)
@@ -459,29 +521,22 @@ def make_return_doc(doctype: str, source_name: str, target_doc=None, return_agai
 		target_doc.pricing_rules = None
 
 		if doctype in ["Purchase Receipt", "Subcontracting Receipt"]:
-			returned_qty_map = get_returned_qty_map_for_row(
+			returned_qty_map = get_returned_qty_map_for_purchase_flow(
 				source_parent.name, source_parent.supplier, source_doc.name, doctype
 			)
+
+			wh_map = returned_qty_map.get(source_doc.warehouse) or frappe._dict()
+			rejected_wh_map = returned_qty_map.get(source_doc.rejected_warehouse) or frappe._dict()
 
 			if doctype == "Subcontracting Receipt":
 				target_doc.received_qty = -1 * flt(source_doc.qty)
 			else:
-				target_doc.received_qty = -1 * flt(
-					source_doc.received_qty - (returned_qty_map.get("received_qty") or 0)
-				)
-				target_doc.rejected_qty = -1 * flt(
-					source_doc.rejected_qty - (returned_qty_map.get("rejected_qty") or 0)
-				)
+				target_doc.rejected_qty = -1 * flt(source_doc.rejected_qty - (rejected_wh_map.qty or 0))
 
-			target_doc.qty = -1 * flt(source_doc.qty - (returned_qty_map.get("qty") or 0))
+			target_doc.qty = -1 * flt(source_doc.qty - (wh_map.qty or 0))
 
 			if hasattr(target_doc, "stock_qty") and not return_against_rejected_qty:
-				target_doc.stock_qty = -1 * flt(
-					source_doc.stock_qty - (returned_qty_map.get("stock_qty") or 0)
-				)
-				target_doc.received_stock_qty = -1 * flt(
-					source_doc.received_stock_qty - (returned_qty_map.get("received_stock_qty") or 0)
-				)
+				target_doc.stock_qty = -1 * flt(source_doc.stock_qty - (flt(wh_map.stock_qty) or 0))
 
 			if doctype == "Subcontracting Receipt":
 				target_doc.subcontracting_order = source_doc.subcontracting_order
@@ -489,7 +544,7 @@ def make_return_doc(doctype: str, source_name: str, target_doc=None, return_agai
 				target_doc.rejected_warehouse = source_doc.rejected_warehouse
 				target_doc.subcontracting_receipt_item = source_doc.name
 				if return_against_rejected_qty:
-					target_doc.qty = -1 * flt(source_doc.rejected_qty - (returned_qty_map.get("qty") or 0))
+					target_doc.qty = -1 * flt(source_doc.rejected_qty - (rejected_wh_map.qty or 0))
 					target_doc.rejected_qty = 0.0
 					target_doc.rejected_warehouse = ""
 					target_doc.warehouse = source_doc.rejected_warehouse
@@ -502,7 +557,7 @@ def make_return_doc(doctype: str, source_name: str, target_doc=None, return_agai
 				target_doc.purchase_receipt_item = source_doc.name
 
 			if doctype == "Purchase Receipt" and return_against_rejected_qty:
-				target_doc.qty = -1 * flt(source_doc.rejected_qty - (returned_qty_map.get("qty") or 0))
+				target_doc.qty = -1 * flt(source_doc.rejected_qty - (rejected_wh_map.qty or 0))
 				target_doc.rejected_qty = 0.0
 				target_doc.rejected_warehouse = ""
 				target_doc.warehouse = source_doc.rejected_warehouse
@@ -541,7 +596,6 @@ def make_return_doc(doctype: str, source_name: str, target_doc=None, return_agai
 			target_doc.against_sales_order = source_doc.against_sales_order
 			target_doc.against_sales_invoice = source_doc.against_sales_invoice
 			target_doc.so_detail = source_doc.so_detail
-			target_doc.si_detail = source_doc.si_detail
 			target_doc.expense_account = source_doc.expense_account
 			target_doc.dn_detail = source_doc.name
 			if default_warehouse_for_sales_return:
@@ -579,6 +633,14 @@ def make_return_doc(doctype: str, source_name: str, target_doc=None, return_agai
 			and not source_doc.use_serial_batch_fields
 		):
 			target_doc.set("use_serial_batch_fields", 1)
+
+		if (
+			not source_doc.serial_no
+			and not source_doc.batch_no
+			and source_doc.serial_and_batch_bundle
+			and source_doc.use_serial_batch_fields
+		):
+			target_doc.set("use_serial_batch_fields", 0)
 
 		if source_doc.item_code and target_doc.get("use_serial_batch_fields"):
 			item_details = frappe.get_cached_value(
@@ -696,6 +758,29 @@ def get_rate_for_return(
 		StockLedgerEntry = frappe.qb.DocType("Stock Ledger Entry")
 		select_field = Abs(StockLedgerEntry.stock_value_difference / StockLedgerEntry.actual_qty)
 
+	item_details = frappe.get_cached_value("Item", item_code, ["has_batch_no", "has_expiry_date"], as_dict=1)
+	set_zero_rate_for_expired_batch = frappe.db.get_single_value(
+		"Selling Settings", "set_zero_rate_for_expired_batch"
+	)
+
+	if (
+		set_zero_rate_for_expired_batch
+		and item_details.has_batch_no
+		and item_details.has_expiry_date
+		and not return_against
+		and voucher_type in ["Sales Invoice", "Delivery Note"]
+	):
+		# set incoming_rate zero explicitly for standalone credit note with expired batch
+		batch_no = frappe.db.get_value(f"{voucher_type} Item", voucher_detail_no, "batch_no")
+		if batch_no and is_batch_expired(batch_no, sle.get("posting_date")):
+			frappe.db.set_value(
+				voucher_type + " Item",
+				voucher_detail_no,
+				"incoming_rate",
+				0,
+			)
+			return 0
+
 	rate = flt(frappe.db.get_value("Stock Ledger Entry", filters, select_field))
 	if not (rate and return_against) and voucher_type in ["Sales Invoice", "Delivery Note"]:
 		rate = frappe.db.get_value(f"{voucher_type} Item", voucher_detail_no, "incoming_rate")
@@ -760,10 +845,32 @@ def get_filters(
 	if reference_voucher_detail_no:
 		filters["voucher_detail_no"] = reference_voucher_detail_no
 
-	if voucher_type in ["Purchase Receipt", "Purchase Invoice"] and item_row and item_row.get("warehouse"):
-		filters["warehouse"] = item_row.get("warehouse")
+	warehouses = []
+	if voucher_type in ["Purchase Receipt", "Purchase Invoice"] and item_row:
+		if reference_voucher_detail_no:
+			warehouses = get_warehouses_for_return(voucher_type, reference_voucher_detail_no)
+
+		if item_row.get("warehouse") and item_row.get("warehouse") in warehouses:
+			filters["warehouse"] = item_row.get("warehouse")
 
 	return filters
+
+
+def get_warehouses_for_return(voucher_type, name):
+	warehouses = []
+	warehouse_details = frappe.get_all(
+		voucher_type + " Item",
+		filters={"name": name, "docstatus": 1},
+		fields=["warehouse", "rejected_warehouse"],
+	)
+
+	for d in warehouse_details:
+		if d.warehouse:
+			warehouses.append(d.warehouse)
+		if d.rejected_warehouse:
+			warehouses.append(d.rejected_warehouse)
+
+	return warehouses
 
 
 def get_returned_serial_nos(child_doc, parent_doc, serial_no_field=None, ignore_voucher_detail_no=None):
@@ -904,7 +1011,14 @@ def get_serial_batches_based_on_bundle(doctype, field, _bundle_ids):
 
 		if doctype == "Packed Item":
 			if key is None:
-				key = frappe.get_cached_value("Packed Item", row.voucher_detail_no, field)
+				key = frappe.get_cached_value(
+					"Packed Item",
+					{"parent_detail_docname": row.voucher_detail_no, "item_code": row.item_code},
+					field,
+				)
+				if key is None:
+					key = frappe.get_cached_value("Packed Item", row.voucher_detail_no, field)
+
 				if row.voucher_type == "Delivery Note":
 					key = frappe.get_cached_value("Delivery Note Item", key, "dn_detail")
 				elif row.voucher_type == "Sales Invoice":
@@ -1161,20 +1275,20 @@ def get_available_serial_nos(serial_nos, warehouse):
 
 
 @frappe.whitelist()
-def get_payment_data(invoice):
+def get_payment_data(invoice: str):
 	payment = frappe.db.get_all("Sales Invoice Payment", {"parent": invoice}, ["mode_of_payment", "amount"])
 	return payment
 
 
 @frappe.whitelist()
-def get_invoice_item_returned_qty(doctype, invoice, customer, item_row_name):
+def get_invoice_item_returned_qty(doctype: str, invoice: str, customer: str, item_row_name: str):
 	is_return, docstatus = frappe.db.get_value(doctype, invoice, ["is_return", "docstatus"])
 	if not is_return and docstatus == 1:
 		return get_returned_qty_map_for_row(invoice, customer, item_row_name, doctype)
 
 
 @frappe.whitelist()
-def is_invoice_returnable(doctype, invoice):
+def is_invoice_returnable(doctype: str, invoice: str):
 	is_return, docstatus, customer = frappe.db.get_value(
 		doctype, invoice, ["is_return", "docstatus", "customer"]
 	)
@@ -1213,3 +1327,17 @@ def get_sales_invoice_item_from_consolidated_invoice(return_against_pos_invoice,
 		return result[0].name if result else None
 	except Exception:
 		return None
+
+
+def is_batch_expired(batch_no, posting_date):
+	"""
+	To check whether the batch is expired or not based on the posting date.
+	"""
+	expiry_date = frappe.db.get_value("Batch", batch_no, "expiry_date")
+	if not expiry_date:
+		return
+
+	if getdate(posting_date) > getdate(expiry_date):
+		return True
+
+	return False

@@ -3,7 +3,7 @@
  "allow_import": 1,
  "allow_rename": 1,
  "autoname": "field:item_code",
- "creation": "2013-05-03 10:45:46",
+ "creation": "2026-02-02 14:41:23.105228",
  "description": "A Product or a Service that is bought, sold or kept in stock.",
  "doctype": "DocType",
  "document_type": "Setup",
@@ -16,9 +16,6 @@
   "item_name",
   "item_group",
   "stock_uom",
-  "opening_stock",
-  "valuation_rate",
-  "standard_rate",
   "column_break0",
   "disabled",
   "allow_alternative_item",
@@ -29,6 +26,10 @@
   "is_grouped_asset",
   "asset_category",
   "asset_naming_series",
+  "section_break_gjns",
+  "opening_stock",
+  "column_break_ixrh",
+  "standard_rate",
   "section_break_znra",
   "over_delivery_receipt_allowance",
   "column_break_wugd",
@@ -41,11 +42,13 @@
   "uoms",
   "dashboard_tab",
   "inventory_section",
+  "inventory_valuation_section",
+  "valuation_method",
+  "column_break_cqdk",
+  "valuation_rate",
   "inventory_settings_section",
-  "shelf_life_in_days",
   "end_of_life",
   "default_material_request_type",
-  "valuation_method",
   "column_break1",
   "warranty_period",
   "weight_per_unit",
@@ -60,6 +63,7 @@
   "create_new_batch",
   "batch_number_series",
   "has_expiry_date",
+  "shelf_life_in_days",
   "retain_sample",
   "sample_quantity",
   "column_break_37",
@@ -114,19 +118,21 @@
   "sales_tax_withholding_category",
   "quality_tab",
   "inspection_required_before_purchase",
-  "quality_inspection_template",
   "inspection_required_before_delivery",
+  "column_break_pxjh",
+  "quality_inspection_template",
   "manufacturing",
   "include_item_in_manufacturing",
   "is_sub_contracted_item",
   "default_bom",
   "column_break_74",
-  "customer_code",
-  "default_item_manufacturer",
-  "default_manufacturer_part_no",
+  "production_capacity",
   "total_projected_qty",
-  "capacity_in_days_section",
-  "production_capacity"
+  "section_break_xili",
+  "customer_code",
+  "column_break_vipt",
+  "default_manufacturer_part_no",
+  "default_item_manufacturer"
  ],
  "fields": [
   {
@@ -161,6 +167,7 @@
    "set_only_once": 1
   },
   {
+   "allow_in_quick_entry": 1,
    "bold": 1,
    "fieldname": "item_name",
    "fieldtype": "Data",
@@ -188,6 +195,7 @@
    "fieldname": "stock_uom",
    "fieldtype": "Link",
    "ignore_user_permissions": 1,
+   "in_list_view": 1,
    "label": "Default Unit of Measure",
    "oldfieldname": "stock_uom",
    "oldfieldtype": "Link",
@@ -218,6 +226,7 @@
    "depends_on": "eval:!doc.is_fixed_asset",
    "fieldname": "is_stock_item",
    "fieldtype": "Check",
+   "in_list_view": 1,
    "label": "Maintain Stock",
    "oldfieldname": "is_stock_item",
    "oldfieldtype": "Select"
@@ -325,6 +334,7 @@
    "options": "fa fa-truck"
   },
   {
+   "depends_on": "has_expiry_date",
    "fieldname": "shelf_life_in_days",
    "fieldtype": "Int",
    "label": "Shelf Life In Days",
@@ -334,11 +344,13 @@
   {
    "default": "2099-12-31",
    "depends_on": "is_stock_item",
+   "description": "Defines the date after which the item can no longer be used in transactions or manufacturing",
    "fieldname": "end_of_life",
    "fieldtype": "Date",
    "label": "End of Life",
    "oldfieldname": "end_of_life",
-   "oldfieldtype": "Date"
+   "oldfieldtype": "Date",
+   "show_description_on_click": 1
   },
   {
    "default": "Purchase",
@@ -349,6 +361,7 @@
   },
   {
    "depends_on": "is_stock_item",
+   "documentation_url": "https://docs.frappe.io/erpnext/change-valuation-method",
    "fieldname": "valuation_method",
    "fieldtype": "Select",
    "label": "Valuation Method",
@@ -420,7 +433,7 @@
    "depends_on": "eval:doc.is_stock_item",
    "fieldname": "serial_nos_and_batches",
    "fieldtype": "Section Break",
-   "label": "Serial Nos and Batches"
+   "label": "Serial Nos / Batches"
   },
   {
    "default": "0",
@@ -444,6 +457,7 @@
    "fieldname": "batch_number_series",
    "fieldtype": "Data",
    "label": "Batch Number Series",
+   "show_description_on_click": 1,
    "translatable": 1
   },
   {
@@ -456,9 +470,12 @@
   {
    "default": "0",
    "depends_on": "has_batch_no",
+   "description": "Enable to reserve a small sample from each batch for any analysis arising ahead",
+   "documentation_url": "https://docs.frappe.io/erpnext/retain-sample-stock",
    "fieldname": "retain_sample",
    "fieldtype": "Check",
-   "label": "Retain Sample"
+   "label": "Retain Sample",
+   "show_description_on_click": 1
   },
   {
    "depends_on": "eval: (doc.retain_sample && doc.has_batch_no)",
@@ -485,7 +502,8 @@
    "description": "Example: ABCD.#####\nIf series is set and Serial No is not mentioned in transactions, then automatic serial number will be created based on this series. If you always want to explicitly mention Serial Nos for this item. leave this blank.",
    "fieldname": "serial_no_series",
    "fieldtype": "Data",
-   "label": "Serial Number Series"
+   "label": "Serial Number Series",
+   "show_description_on_click": 1
   },
   {
    "collapsible": 1,
@@ -889,15 +907,9 @@
    "fieldtype": "Column Break"
   },
   {
-   "collapsible": 1,
    "fieldname": "deferred_accounting_section",
    "fieldtype": "Section Break",
    "label": "Deferred Accounting"
-  },
-  {
-   "fieldname": "capacity_in_days_section",
-   "fieldtype": "Section Break",
-   "label": "Capacity (In Days)"
   },
   {
    "fieldname": "production_capacity",
@@ -931,10 +943,10 @@
    "fieldtype": "Section Break"
   },
   {
+   "depends_on": "is_purchase_item",
    "fieldname": "purchase_tax_withholding_category",
    "fieldtype": "Link",
    "label": "Purchase Tax Withholding Category",
-   "depends_on": "is_purchase_item",
    "options": "Tax Withholding Category"
   },
   {
@@ -942,11 +954,40 @@
    "fieldtype": "Column Break"
   },
   {
+   "depends_on": "is_sales_item",
    "fieldname": "sales_tax_withholding_category",
    "fieldtype": "Link",
    "label": "Sales Tax Withholding Category",
-   "depends_on": "is_sales_item",
    "options": "Tax Withholding Category"
+  },
+  {
+   "fieldname": "column_break_cqdk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "inventory_valuation_section",
+   "fieldtype": "Section Break",
+   "label": "Inventory Valuation"
+  },
+  {
+   "fieldname": "section_break_gjns",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_ixrh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_pxjh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_xili",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_vipt",
+   "fieldtype": "Column Break"
   }
  ],
  "icon": "fa fa-tag",
@@ -954,7 +995,7 @@
  "image_field": "image",
  "links": [],
  "make_attachments_public": 1,
- "modified": "2025-12-15 20:08:35.634046",
+ "modified": "2026-04-14 13:37:00.183583",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Item",

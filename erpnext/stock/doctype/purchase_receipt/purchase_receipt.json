@@ -3,7 +3,7 @@
  "allow_auto_repeat": 1,
  "allow_import": 1,
  "autoname": "naming_series:",
- "creation": "2013-05-21 16:16:39",
+ "creation": "2026-04-06 14:10:33.384946",
  "doctype": "DocType",
  "document_type": "Document",
  "editable_grid": 1,
@@ -11,7 +11,6 @@
  "field_order": [
   "supplier_section",
   "column_break0",
-  "title",
   "naming_series",
   "supplier",
   "supplier_name",
@@ -26,6 +25,8 @@
   "apply_putaway_rule",
   "is_return",
   "return_against",
+  "section_break_zwvg",
+  "title",
   "accounting_dimensions_section",
   "cost_center",
   "dimension_col_break",
@@ -77,17 +78,19 @@
   "taxes_and_charges_added",
   "taxes_and_charges_deducted",
   "total_taxes_and_charges",
-  "section_break_46",
-  "base_grand_total",
-  "base_rounding_adjustment",
-  "base_rounded_total",
-  "base_in_words",
-  "column_break_50",
+  "totals_section",
   "grand_total",
+  "in_words",
+  "column_break_50",
+  "disable_rounded_total",
   "rounding_adjustment",
   "rounded_total",
-  "in_words",
-  "disable_rounded_total",
+  "base_totals_section",
+  "base_grand_total",
+  "base_in_words",
+  "column_break_ugyv",
+  "base_rounding_adjustment",
+  "base_rounded_total",
   "section_break_42",
   "apply_discount_on",
   "base_discount_amount",
@@ -171,10 +174,8 @@
   },
   {
    "allow_on_submit": 1,
-   "default": "{supplier_name}",
    "fieldname": "title",
    "fieldtype": "Data",
-   "hidden": 1,
    "label": "Title",
    "no_copy": 1,
    "print_hide": 1
@@ -773,14 +774,9 @@
    "print_hide": 1
   },
   {
-   "fieldname": "section_break_46",
-   "fieldtype": "Section Break",
-   "label": "Totals"
-  },
-  {
    "fieldname": "base_grand_total",
    "fieldtype": "Currency",
-   "label": "Grand Total (Company Currency)",
+   "label": "Grand Total",
    "oldfieldname": "grand_total",
    "oldfieldtype": "Currency",
    "options": "Company:company:default_currency",
@@ -791,7 +787,7 @@
    "depends_on": "eval:!doc.disable_rounded_total",
    "fieldname": "base_rounding_adjustment",
    "fieldtype": "Currency",
-   "label": "Rounding Adjustment (Company Currency)",
+   "label": "Rounding Adjustment",
    "no_copy": 1,
    "options": "Company:company:default_currency",
    "print_hide": 1,
@@ -800,7 +796,7 @@
   {
    "fieldname": "base_in_words",
    "fieldtype": "Data",
-   "label": "In Words (Company Currency)",
+   "label": "In Words",
    "length": 240,
    "oldfieldname": "in_words",
    "oldfieldtype": "Data",
@@ -810,7 +806,7 @@
   {
    "fieldname": "base_rounded_total",
    "fieldtype": "Currency",
-   "label": "Rounded Total (Company Currency)",
+   "label": "Rounded Total",
    "oldfieldname": "rounded_total",
    "oldfieldtype": "Currency",
    "options": "Company:company:default_currency",
@@ -941,6 +937,7 @@
   {
    "fieldname": "per_billed",
    "fieldtype": "Percent",
+   "in_list_view": 1,
    "label": "% Amount Billed",
    "no_copy": 1,
    "print_hide": 1,
@@ -1283,6 +1280,25 @@
    "label": "Item Wise Tax Details",
    "no_copy": 1,
    "options": "Item Wise Tax Detail"
+  },
+  {
+   "fieldname": "totals_section",
+   "fieldtype": "Section Break",
+   "label": "Totals"
+  },
+  {
+   "fieldname": "base_totals_section",
+   "fieldtype": "Section Break",
+   "label": "Totals (Company Currency)",
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "column_break_ugyv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_zwvg",
+   "fieldtype": "Section Break"
   }
  ],
  "grid_page_length": 50,
@@ -1290,7 +1306,7 @@
  "idx": 261,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-11-27 16:46:30.210628",
+ "modified": "2026-04-06 14:11:29.630333",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Purchase Receipt",
@@ -1358,6 +1374,6 @@
  "sort_order": "DESC",
  "states": [],
  "timeline_field": "supplier",
- "title_field": "title",
+ "title_field": "supplier_name",
  "track_changes": 1
 }

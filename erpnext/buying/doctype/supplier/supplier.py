@@ -14,6 +14,7 @@ from frappe.model.naming import set_name_by_naming_series, set_name_from_naming_
 from erpnext.accounts.party import (
 	get_dashboard_info,
 	validate_party_accounts,
+	validate_party_currency_before_merging,
 )
 from erpnext.controllers.website_list_for_contact import add_role_for_portal_user
 from erpnext.utilities.transaction_base import TransactionBase
@@ -48,6 +49,7 @@ class Supplier(TransactionBase):
 		default_price_list: DF.Link | None
 		disabled: DF.Check
 		email_id: DF.ReadOnly | None
+		gender: DF.Link | None
 		hold_type: DF.Literal["", "All", "Invoices", "Payments"]
 		image: DF.AttachImage | None
 		is_frozen: DF.Check
@@ -61,7 +63,7 @@ class Supplier(TransactionBase):
 		portal_users: DF.Table[PortalUser]
 		prevent_pos: DF.Check
 		prevent_rfqs: DF.Check
-		primary_address: DF.Text | None
+		primary_address: DF.TextEditor | None
 		release_date: DF.Date | None
 		represents_company: DF.Link | None
 		supplier_details: DF.Text | None
@@ -160,8 +162,6 @@ class Supplier(TransactionBase):
 		if doc.payment_terms:
 			self.payment_terms = doc.payment_terms
 
-		self.save()
-
 	def validate_internal_supplier(self):
 		if not self.is_internal_supplier:
 			self.represents_company = ""
@@ -213,6 +213,10 @@ class Supplier(TransactionBase):
 
 		delete_contact_and_address("Supplier", self.name)
 
+	def before_rename(self, olddn, newdn, merge=False):
+		if merge:
+			validate_party_currency_before_merging("Supplier", olddn, newdn)
+
 	def after_rename(self, olddn, newdn, merge=False):
 		if frappe.defaults.get_global_default("supp_master_name") == "Supplier Name":
 			self.db_set("supplier_name", newdn)
@@ -220,7 +224,9 @@ class Supplier(TransactionBase):
 
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
-def get_supplier_primary(doctype, txt, searchfield, start, page_len, filters):
+def get_supplier_primary(
+	doctype: str | None, txt: str, searchfield: str | None, start: int, page_len: int, filters: dict
+):
 	supplier = filters.get("supplier")
 	type = filters.get("type")
 	type_doctype = frappe.qb.DocType(type)

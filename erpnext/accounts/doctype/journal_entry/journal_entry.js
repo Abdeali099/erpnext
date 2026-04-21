@@ -43,6 +43,20 @@ frappe.ui.form.on("Journal Entry", {
 				},
 			};
 		});
+
+		frm.set_query("project", "accounts", function (doc, cdt, cdn) {
+			let row = frappe.get_doc(cdt, cdn);
+			let filters = {
+				company: doc.company,
+			};
+			if (row.party_type == "Customer") {
+				filters.customer = row.party;
+			}
+			return {
+				query: "erpnext.controllers.queries.get_project_name",
+				filters,
+			};
+		});
 	},
 
 	get_balance_for_periodic_accounting(frm) {
@@ -112,9 +126,11 @@ frappe.ui.form.on("Journal Entry", {
 
 		erpnext.accounts.unreconcile_payment.add_unreconcile_btn(frm);
 
-		$.each(frm.doc.accounts || [], function (i, row) {
-			erpnext.journal_entry.set_exchange_rate(frm, row.doctype, row.name);
-		});
+		if (frm.doc.voucher_type !== "Exchange Gain Or Loss") {
+			$.each(frm.doc.accounts || [], function (i, row) {
+				erpnext.journal_entry.set_exchange_rate(frm, row.doctype, row.name);
+			});
+		}
 	},
 	before_save: function (frm) {
 		if (frm.doc.docstatus == 0 && !frm.doc.is_system_generated) {
@@ -261,7 +277,21 @@ frappe.ui.form.on("Journal Entry", {
 var update_jv_details = function (doc, r) {
 	$.each(r, function (i, d) {
 		var row = frappe.model.add_child(doc, "Journal Entry Account", "accounts");
-		frappe.model.set_value(row.doctype, row.name, "account", d.account);
+		const {
+			idx,
+			name,
+			owner,
+			parent,
+			parenttype,
+			parentfield,
+			creation,
+			modified,
+			modified_by,
+			doctype,
+			docstatus,
+			...fields
+		} = d;
+		frappe.model.set_value(row.doctype, row.name, fields);
 	});
 	refresh_field("accounts");
 };
@@ -271,10 +301,6 @@ erpnext.accounts.JournalEntry = class JournalEntry extends frappe.ui.form.Contro
 		this.load_defaults();
 		this.setup_queries();
 		erpnext.accounts.dimensions.setup_dimension_filters(this.frm, this.frm.doctype);
-	}
-
-	onload_post_render() {
-		this.frm.get_field("accounts").grid.set_multiple_add("account");
 	}
 
 	load_defaults() {
@@ -622,7 +648,7 @@ $.extend(erpnext.journal_entry, {
 					reqd: 1,
 					default: frm.doc.posting_date,
 				},
-				{ fieldtype: "Small Text", fieldname: "user_remark", label: __("User Remark") },
+				{ fieldtype: "Small Text", fieldname: "remark", label: __("Remark") },
 				{
 					fieldtype: "Select",
 					fieldname: "naming_series",
@@ -639,8 +665,14 @@ $.extend(erpnext.journal_entry, {
 			var values = dialog.get_values();
 
 			frm.set_value("posting_date", values.posting_date);
-			frm.set_value("user_remark", values.user_remark);
 			frm.set_value("naming_series", values.naming_series);
+			if (values.remark) {
+				frm.set_value("custom_remark", 1);
+				frm.set_value("remark", values.remark);
+			} else {
+				frm.set_value("custom_remark", 0);
+				frm.set_value("remark", "");
+			}
 
 			// clear table is used because there might've been an error while adding child
 			// and cleanup didn't happen

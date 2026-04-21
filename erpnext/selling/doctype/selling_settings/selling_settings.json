@@ -29,6 +29,7 @@
   "dn_required",
   "sales_update_frequency",
   "blanket_order_allowance",
+  "enable_tracking_sales_commissions",
   "column_break_5",
   "allow_multiple_items",
   "allow_against_multiple_purchase_orders",
@@ -39,13 +40,16 @@
   "enable_cutoff_date_on_bulk_delivery_note_creation",
   "allow_zero_qty_in_quotation",
   "allow_zero_qty_in_sales_order",
+  "set_zero_rate_for_expired_batch",
+  "section_break_avhb",
+  "enable_utm",
   "experimental_section",
   "use_legacy_js_reactivity",
   "subcontracting_inward_tab",
   "section_break_zwh6",
   "allow_delivery_of_overproduced_qty",
   "column_break_mla9",
-  "deliver_scrap_items"
+  "deliver_secondary_items"
  ],
  "fields": [
   {
@@ -61,6 +65,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Default Customer Group",
+   "link_filters": "[[\"Customer Group\", \"is_group\", \"=\", 0]]",
    "options": "Customer Group"
   },
   {
@@ -256,13 +261,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "0",
-   "description": "If enabled, the Scrap Item generated against a Finished Good will also be added in the Stock Entry when delivering that Finished Good.",
-   "fieldname": "deliver_scrap_items",
-   "fieldtype": "Check",
-   "label": "Deliver Scrap Items"
-  },
-  {
    "fieldname": "item_price_tab",
    "fieldtype": "Tab Break",
    "label": "Item Price"
@@ -288,15 +286,50 @@
    "fieldname": "use_legacy_js_reactivity",
    "fieldtype": "Check",
    "label": "Use Legacy (Client side) Reactivity"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, system will set incoming rate as zero for stand-alone credit notes with expired batch item.",
+   "fieldname": "set_zero_rate_for_expired_batch",
+   "fieldtype": "Check",
+   "label": "Set Incoming Rate as Zero for Expired Batch"
+  },
+  {
+   "default": "0",
+   "description": "Manage sales partner's and sales team's commissions",
+   "fieldname": "enable_tracking_sales_commissions",
+   "fieldtype": "Check",
+   "label": "Enable tracking sales commissions"
+  },
+  {
+   "fieldname": "section_break_avhb",
+   "fieldtype": "Section Break",
+   "label": "Analytics"
+  },
+  {
+   "default": "0",
+   "description": "Enable Urchin Tracking Module parameters in Quotation, Sales Order, Sales Invoice, POS Invoice, Lead,  and Delivery Note.",
+   "documentation_url": "https://en.wikipedia.org/wiki/UTM_parameters",
+   "fieldname": "enable_utm",
+   "fieldtype": "Check",
+   "label": "Enable UTM"
+  },
+  {
+   "default": "0",
+   "description": "If enabled, the Secondary Items generated against a Finished Good will also be added in the Stock Entry when delivering that Finished Good.",
+   "fieldname": "deliver_secondary_items",
+   "fieldtype": "Check",
+   "label": "Deliver Secondary Items"
   }
  ],
  "grid_page_length": 50,
+ "hide_toolbar": 0,
  "icon": "fa fa-cog",
  "idx": 1,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-12-17 16:08:48.865885",
+ "modified": "2026-03-16 13:28:18.988883",
  "modified_by": "Administrator",
  "module": "Selling",
  "name": "Selling Settings",

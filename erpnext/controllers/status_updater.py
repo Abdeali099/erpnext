@@ -91,7 +91,8 @@ status_map = {
 	],
 	"Delivery Note": [
 		["Draft", None],
-		["To Bill", "eval:self.per_billed < 100 and self.docstatus == 1"],
+		["To Bill", "eval:self.per_billed == 0 and self.docstatus == 1"],
+		["Partially Billed", "eval:self.per_billed < 100 and self.per_billed > 0 and self.docstatus == 1"],
 		["Completed", "eval:self.per_billed == 100 and self.docstatus == 1"],
 		["Return Issued", "eval:self.per_returned == 100 and self.docstatus == 1"],
 		["Return", "eval:self.is_return == 1 and self.per_billed == 0 and self.docstatus == 1"],
@@ -118,7 +119,7 @@ status_map = {
 		["Pending", "eval:self.status != 'Stopped' and self.per_ordered == 0 and self.docstatus == 1"],
 		[
 			"Ordered",
-			"eval:self.status != 'Stopped' and self.per_ordered == 100 and self.docstatus == 1 and self.material_request_type in ['Purchase', 'Manufacture']",
+			"eval:self.status != 'Stopped' and self.per_ordered == 100 and self.docstatus == 1 and self.material_request_type in ['Purchase', 'Manufacture', 'Subcontracting']",
 		],
 		[
 			"Transferred",
@@ -183,6 +184,9 @@ class StatusUpdater(Document):
 	Sales Invoice: Update Billed Amt, Update Percent and Validate over billing
 	Installation Note: Update Installed Qty, Update Percent Qty and Validate over installation
 	"""
+
+	def on_discard(self):
+		self.db_set("status", "Cancelled")
 
 	def update_prevdoc_status(self):
 		self.update_qty()
@@ -263,11 +267,17 @@ class StatusUpdater(Document):
 		self.global_amount_allowance = None
 
 		for args in self.status_updater:
-			if "target_ref_field" not in args:
-				# if target_ref_field is not specified, the programmer does not want to validate qty / amount
+			if "target_ref_field" not in args or args.get("validate_qty") is False:
+				# if target_ref_field is not specified or validate_qty is explicitly set to False, skip validation
 				continue
 
 			items_to_validate = []
+			selling_negative_rate_allowed = frappe.get_single_value(
+				"Selling Settings", "allow_negative_rates_for_items"
+			)
+			buying_negative_rate_allowed = frappe.get_single_value(
+				"Buying Settings", "allow_negative_rates_for_items"
+			)
 
 			# get unique transactions to update
 			for d in self.get_all_children():
@@ -277,7 +287,12 @@ class StatusUpdater(Document):
 				if hasattr(d, "qty") and d.qty > 0 and self.get("is_return"):
 					frappe.throw(_("For an item {0}, quantity must be negative number").format(d.item_code))
 
-				if not frappe.get_single_value("Selling Settings", "allow_negative_rates_for_items"):
+				if (
+					not selling_negative_rate_allowed and self.doctype in ["Sales Invoice", "Delivery Note"]
+				) or (
+					not buying_negative_rate_allowed
+					and self.doctype in ["Purchase Invoice", "Purchase Receipt"]
+				):
 					if hasattr(d, "item_code") and hasattr(d, "rate") and flt(d.rate) < 0:
 						frappe.throw(
 							_(
@@ -285,7 +300,11 @@ class StatusUpdater(Document):
 							).format(
 								frappe.bold(d.item_code),
 								frappe.bold(_("`Allow Negative rates for Items`")),
-								get_link_to_form("Selling Settings", "Selling Settings"),
+								get_link_to_form(
+									"Selling Settings"
+									if self.doctype in ["Sales Invoice", "Delivery Note"]
+									else "Buying Settings"
+								),
 							),
 						)
 
@@ -337,7 +356,7 @@ class StatusUpdater(Document):
 					item_details.extend(self.fetch_items_with_pending_qty(args, "item_code", regular_items))
 
 				# Query production plan items with production_item field
-				if pp_items:
+				if pp_items and args.get("target_dt") in ["Production Plan Sub Assembly Item"]:
 					item_details.extend(self.fetch_items_with_pending_qty(args, "production_item", pp_items))
 
 				item_lookup = {item.name: item for item in item_details}
@@ -440,7 +459,10 @@ class StatusUpdater(Document):
 		):
 			return
 
-		if args["source_dt"] != "Pick List Item":
+		if args["source_dt"] != "Pick List Item" and args["target_dt"] not in [
+			"Quotation Item",
+			"Packed Item",
+		]:
 			if qty_or_amount == "qty":
 				action_msg = _(
 					'To allow over receipt / delivery, update "Over Receipt/Delivery Allowance" in Stock Settings or the Item.'
@@ -506,13 +528,6 @@ class StatusUpdater(Document):
 		for d in self.get_all_children():
 			if d.doctype != args["source_dt"]:
 				continue
-
-			if (
-				d.get("material_request")
-				and frappe.db.get_value("Material Request", d.material_request, "material_request_type")
-				== "Subcontracting"
-			):
-				args.update({"source_field": "fg_item_qty"})
 
 			self._update_modified(args, update_modified)
 

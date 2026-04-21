@@ -178,6 +178,8 @@ frappe.query_reports["Accounts Receivable"] = {
 			fieldtype: "Check",
 		},
 	],
+	collapsible_filters: true,
+	separate_check_filters: true,
 
 	formatter: function (value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);
@@ -192,6 +194,10 @@ frappe.query_reports["Accounts Receivable"] = {
 			var filters = report.get_values();
 			frappe.set_route("query-report", "Accounts Receivable Summary", { company: filters.company });
 		});
+
+		if (frappe.boot.sysdefaults.default_ageing_range) {
+			report.set_filter_value("range", frappe.boot.sysdefaults.default_ageing_range);
+		}
 	},
 };
 

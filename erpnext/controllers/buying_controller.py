@@ -18,7 +18,11 @@ from erpnext.buying.utils import update_last_purchase_rate, validate_for_items
 from erpnext.controllers.accounts_controller import get_taxes_and_charges
 from erpnext.controllers.sales_and_purchase_return import get_rate_for_return
 from erpnext.controllers.subcontracting_controller import SubcontractingController
-from erpnext.stock.get_item_details import get_conversion_factor, get_item_defaults
+from erpnext.stock.get_item_details import (
+	NOT_APPLICABLE_TAX,
+	get_conversion_factor,
+	get_item_defaults,
+)
 from erpnext.stock.utils import get_incoming_rate
 
 
@@ -51,7 +55,7 @@ class BuyingController(SubcontractingController):
 			self.validate_purchase_receipt_if_update_stock()
 
 		if self.doctype == "Purchase Receipt" or (self.doctype == "Purchase Invoice" and self.update_stock):
-			# self.validate_purchase_return()
+			self.validate_purchase_return()
 			self.validate_rejected_warehouse()
 			self.validate_accepted_rejected_qty()
 			validate_for_items(self)
@@ -457,7 +461,7 @@ class BuyingController(SubcontractingController):
 						get_conversion_factor(item.item_code, item.uom).get("conversion_factor") or 1.0
 					)
 
-				net_rate = item.base_net_amount
+				net_rate = item.qty * item.base_net_rate
 				if item.sales_incoming_rate:  # for internal transfer
 					net_rate = item.qty * item.sales_incoming_rate
 
@@ -503,11 +507,15 @@ class BuyingController(SubcontractingController):
 			if d.category not in ["Valuation", "Valuation and Total"]:
 				continue
 
+			amount = flt(d.base_tax_amount_after_discount_amount) * (
+				-1 if d.get("add_deduct_tax") == "Deduct" else 1
+			)
+
 			if d.charge_type == "On Net Total":
-				total_valuation_amount += flt(d.base_tax_amount_after_discount_amount)
+				total_valuation_amount += amount
 				tax_accounts.append(d.account_head)
 			else:
-				total_actual_tax_amount += flt(d.base_tax_amount_after_discount_amount)
+				total_actual_tax_amount += amount
 
 		return tax_accounts, total_valuation_amount, total_actual_tax_amount
 
@@ -517,6 +525,9 @@ class BuyingController(SubcontractingController):
 			tax_details = json.loads(item.item_tax_rate)
 			for account, rate in tax_details.items():
 				if account not in tax_accounts:
+					continue
+
+				if rate == NOT_APPLICABLE_TAX:
 					continue
 
 				net_rate = item.base_net_amount
@@ -682,15 +693,8 @@ class BuyingController(SubcontractingController):
 
 	def validate_purchase_return(self):
 		for d in self.get("items"):
-			if self.is_return and flt(d.rejected_qty) != 0:
-				frappe.throw(
-					_("Row #{idx}: {field_label} is not allowed in Purchase Return.").format(
-						idx=d.idx,
-						field_label=_(d.meta.get_label("rejected_qty")),
-					)
-				)
-
-			# validate rate with ref PR
+			if self.is_return and not flt(d.rejected_qty) and d.rejected_warehouse:
+				d.rejected_warehouse = None
 
 	# validate accepted and rejected qty
 	def validate_accepted_rejected_qty(self):
@@ -790,7 +794,9 @@ class BuyingController(SubcontractingController):
 								or self.is_return
 								or (self.is_internal_transfer() and self.docstatus == 2)
 								else self.get_package_for_target_warehouse(
-									d, type_of_transaction=type_of_transaction
+									d,
+									type_of_transaction=type_of_transaction,
+									via_landed_cost_voucher=via_landed_cost_voucher,
 								)
 							),
 						},
@@ -878,7 +884,22 @@ class BuyingController(SubcontractingController):
 			via_landed_cost_voucher=via_landed_cost_voucher,
 		)
 
-	def get_package_for_target_warehouse(self, item, warehouse=None, type_of_transaction=None) -> str:
+	def get_package_for_target_warehouse(
+		self, item, warehouse=None, type_of_transaction=None, via_landed_cost_voucher=None
+	) -> str:
+		if via_landed_cost_voucher and item.get("warehouse"):
+			if sabb := frappe.db.get_value(
+				"Serial and Batch Bundle",
+				{
+					"voucher_detail_no": item.name,
+					"warehouse": item.get("warehouse"),
+					"docstatus": 1,
+					"is_cancelled": 0,
+				},
+				"name",
+			):
+				return sabb
+
 		if not item.serial_and_batch_bundle:
 			return ""
 
@@ -1082,12 +1103,10 @@ class BuyingController(SubcontractingController):
 			}
 		)
 		for dimension in accounting_dimensions[0]:
-			asset.update(
-				{
-					dimension["fieldname"]: self.get(dimension["fieldname"])
-					or dimension.get("default_dimension")
-				}
-			)
+			fieldname = dimension["fieldname"]
+			default_dimension = accounting_dimensions[1].get(self.company, {}).get(fieldname)
+			if not asset.get(fieldname):
+				asset.update({fieldname: row.get(fieldname) or self.get(fieldname) or default_dimension})
 
 		asset.flags.ignore_validate = True
 		asset.flags.ignore_mandatory = True

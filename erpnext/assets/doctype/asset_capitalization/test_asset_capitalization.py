@@ -1,30 +1,26 @@
 # Copyright (c) 2021, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
-import unittest
 
 import frappe
-from frappe.tests import IntegrationTestCase
-from frappe.utils import cint, flt, getdate, now_datetime
+from frappe.utils import cint, flt, now_datetime
 
 from erpnext.assets.doctype.asset.depreciation import post_depreciation_entries
 from erpnext.assets.doctype.asset.test_asset import (
 	create_asset,
-	create_asset_data,
+	create_fixed_asset_item,
 	set_depreciation_settings_in_company,
 )
-from erpnext.assets.doctype.asset_depreciation_schedule.asset_depreciation_schedule import (
-	get_asset_depr_schedule_doc,
-)
 from erpnext.stock.doctype.item.test_item import create_item
+from erpnext.stock.doctype.purchase_receipt.test_purchase_receipt import make_purchase_receipt
 from erpnext.stock.doctype.serial_and_batch_bundle.test_serial_and_batch_bundle import (
 	make_serial_batch_bundle,
 )
+from erpnext.tests.utils import ERPNextTestSuite
 
 
-class TestAssetCapitalization(IntegrationTestCase):
+class TestAssetCapitalization(ERPNextTestSuite):
 	def setUp(self):
 		set_depreciation_settings_in_company()
-		create_asset_data()
 		create_asset_capitalization_data()
 		frappe.db.sql("delete from `tabTax Rule`")
 
@@ -61,7 +57,7 @@ class TestAssetCapitalization(IntegrationTestCase):
 
 		wip_composite_asset = create_asset(
 			asset_name="Asset Capitalization WIP Composite Asset",
-			is_composite_asset=1,
+			asset_type="Composite Asset",
 			warehouse="Stores - TCP1",
 			company=company,
 		)
@@ -81,7 +77,6 @@ class TestAssetCapitalization(IntegrationTestCase):
 		)
 
 		# Test Asset Capitalization values
-		self.assertEqual(asset_capitalization.target_qty, 1)
 
 		self.assertEqual(asset_capitalization.stock_items[0].valuation_rate, stock_rate)
 		self.assertEqual(asset_capitalization.stock_items[0].amount, stock_amount)
@@ -156,7 +151,7 @@ class TestAssetCapitalization(IntegrationTestCase):
 
 		wip_composite_asset = create_asset(
 			asset_name="Asset Capitalization WIP Composite Asset",
-			is_composite_asset=1,
+			asset_type="Composite Asset",
 			warehouse="Stores - TCP1",
 			company=company,
 		)
@@ -176,8 +171,6 @@ class TestAssetCapitalization(IntegrationTestCase):
 		)
 
 		# Test Asset Capitalization values
-		self.assertEqual(asset_capitalization.target_qty, 1)
-
 		self.assertEqual(asset_capitalization.stock_items[0].valuation_rate, stock_rate)
 		self.assertEqual(asset_capitalization.stock_items[0].amount, stock_amount)
 		self.assertEqual(asset_capitalization.stock_items_total, stock_amount)
@@ -245,7 +238,7 @@ class TestAssetCapitalization(IntegrationTestCase):
 
 		wip_composite_asset = create_asset(
 			asset_name="Asset Capitalization WIP Composite Asset",
-			is_composite_asset=1,
+			asset_type="Composite Asset",
 			warehouse="Stores - TCP1",
 			company=company,
 		)
@@ -262,8 +255,6 @@ class TestAssetCapitalization(IntegrationTestCase):
 		)
 
 		# Test Asset Capitalization values
-		self.assertEqual(asset_capitalization.target_qty, 1)
-
 		self.assertEqual(asset_capitalization.stock_items[0].valuation_rate, stock_rate)
 		self.assertEqual(asset_capitalization.stock_items[0].amount, stock_amount)
 		self.assertEqual(asset_capitalization.stock_items_total, stock_amount)
@@ -313,7 +304,7 @@ class TestAssetCapitalization(IntegrationTestCase):
 
 		wip_composite_asset = create_asset(
 			asset_name="Asset Capitalization WIP Composite Asset",
-			is_composite_asset=1,
+			asset_type="Composite Asset",
 			warehouse="Stores - TCP1",
 			company=company,
 		)
@@ -361,33 +352,46 @@ class TestAssetCapitalization(IntegrationTestCase):
 
 		wip_composite_asset = create_asset(
 			asset_name="Asset Capitalization WIP Composite Asset",
-			is_composite_asset=1,
+			asset_type="Composite Asset",
 			warehouse="Stores - TCP1",
 			company=company,
 		)
 
 		consumed_asset_value = 100000
 
-		consumed_asset = create_asset(
-			asset_name="Asset Capitalization Consumable Asset",
-			asset_value=consumed_asset_value,
-			submit=1,
-			warehouse="Stores - _TC",
-			is_composite_component=1,
+		item = create_fixed_asset_item("Asset Capitalization Consumable Asset")
+
+		pr = make_purchase_receipt(
+			item_code=item.item_code,
+			qty=1,
+			rate=consumed_asset_value,
 			company=company,
+			warehouse="Stores - TCP1",
 		)
+		consumed_asset_name = frappe.db.get_value("Asset", {"purchase_receipt": pr.name}, "name")
+		consumed_asset_doc = frappe.get_doc("Asset", consumed_asset_name)
+
+		consumed_asset_doc.update(
+			{
+				"asset_type": "Composite Component",
+				"purchase_date": pr.posting_date,
+				"available_for_use_date": pr.posting_date,
+				"location": "Test Location",
+			}
+		)
+		consumed_asset_doc.save()
+		consumed_asset_doc.submit()
 
 		# Create and submit Asset Captitalization
 		asset_capitalization = create_asset_capitalization(
 			target_asset=wip_composite_asset.name,
 			target_asset_location="Test Location",
-			consumed_asset=consumed_asset.name,
+			consumed_asset=consumed_asset_doc.name,
 			company=company,
 			submit=1,
 		)
 
 		# Test Asset Capitalization values
-		self.assertEqual(asset_capitalization.target_qty, 1)
 		self.assertEqual(asset_capitalization.asset_items[0].asset_value, consumed_asset_value)
 
 		actual_gle = get_actual_gle_dict(asset_capitalization.name)
@@ -421,9 +425,6 @@ def create_asset_capitalization(**args):
 			"target_item_code": target_item_code,
 			"target_asset": target_asset.name,
 			"target_asset_location": "Test Location",
-			"target_qty": flt(args.target_qty) or 1,
-			"target_batch_no": args.target_batch_no,
-			"target_serial_no": args.target_serial_no,
 			"finance_book": args.finance_book,
 		}
 	)
@@ -516,7 +517,7 @@ def create_depreciation_asset(**args):
 	args = frappe._dict(args)
 
 	asset = frappe.new_doc("Asset")
-	asset.is_existing_asset = 1
+	asset.asset_type = args.asset_type or "Existing Asset"
 	asset.calculate_depreciation = 1
 	asset.asset_owner = "Company"
 

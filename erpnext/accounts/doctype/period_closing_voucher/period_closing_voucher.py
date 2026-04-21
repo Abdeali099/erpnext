@@ -6,7 +6,6 @@ import copy
 
 import frappe
 from frappe import _
-from frappe.query_builder.functions import Sum
 from frappe.utils import add_days, flt, formatdate, getdate
 
 from erpnext.accounts.doctype.account_closing_balance.account_closing_balance import (
@@ -516,7 +515,7 @@ def delete_closing_entries(voucher_no):
 
 
 @frappe.whitelist()
-def get_period_start_end_date(fiscal_year, company):
+def get_period_start_end_date(fiscal_year: str, company: str):
 	fy_start_date, fy_end_date = frappe.db.get_value(
 		"Fiscal Year", fiscal_year, ["year_start_date", "year_end_date"]
 	)

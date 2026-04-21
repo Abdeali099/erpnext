@@ -4,7 +4,6 @@
 
 import frappe
 from frappe import qb
-from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, add_years, flt, getdate, nowdate, today
 from frappe.utils.data import getdate as convert_to_date
 
@@ -17,11 +16,10 @@ from erpnext.accounts.party import get_party_account
 from erpnext.accounts.utils import get_fiscal_year
 from erpnext.buying.doctype.purchase_order.test_purchase_order import create_purchase_order
 from erpnext.stock.doctype.item.test_item import create_item
+from erpnext.tests.utils import ERPNextTestSuite
 
-EXTRA_TEST_RECORD_DEPENDENCIES = ["Item"]
 
-
-class TestPaymentReconciliation(IntegrationTestCase):
+class TestPaymentReconciliation(ERPNextTestSuite):
 	def setUp(self):
 		self.create_company()
 		self.create_item()
@@ -29,9 +27,6 @@ class TestPaymentReconciliation(IntegrationTestCase):
 		self.create_account()
 		self.create_cost_center()
 		self.clear_old_entries()
-
-	def tearDown(self):
-		frappe.db.rollback()
 
 	def create_company(self):
 		company = None
@@ -1235,7 +1230,7 @@ class TestPaymentReconciliation(IntegrationTestCase):
 		payment_vouchers = [x.get("reference_name") for x in pr.get("payments")]
 		self.assertCountEqual(payment_vouchers, [je2.name, pe2.name])
 
-	@IntegrationTestCase.change_settings(
+	@ERPNextTestSuite.change_settings(
 		"Accounts Settings",
 		{
 			"allow_multi_currency_invoices_against_single_party_account": 1,
@@ -2339,6 +2334,210 @@ class TestPaymentReconciliation(IntegrationTestCase):
 		self.assertEqual(getdate(pe.references[1].reconcile_effect_on), getdate(pi2.posting_date))
 
 		frappe.db.set_value("Company", self.company, default_settings)
+
+	def test_foreign_currency_reverse_payment_entry_against_payment_entry_for_customer(self):
+		transaction_date = nowdate()
+		customer = self.customer3
+		amount = 1000
+		exchange_rate_at_payment = 100
+		exchange_rate_at_reverse_payment = 95
+
+		# Receive amount from customer - 1,00,000
+		pe = self.create_payment_entry(amount=amount, posting_date=transaction_date, customer=customer)
+		pe.payment_type = "Receive"
+		pe.paid_from = self.debtors_eur
+		pe.paid_from_account_currency = "EUR"
+		pe.source_exchange_rate = exchange_rate_at_payment
+		pe.paid_amount = amount
+		pe.received_amount = exchange_rate_at_payment * amount
+		pe.paid_to = self.cash
+		pe.paid_to_account_currency = "INR"
+		pe = pe.save().submit()
+
+		# Pay amount to customer - 95,000
+		reverse_pe = self.create_payment_entry(
+			amount=amount, posting_date=transaction_date, customer=customer
+		)
+		reverse_pe.payment_type = "Pay"
+		reverse_pe.paid_from = self.cash
+		reverse_pe.paid_from_account_currency = "INR"
+		reverse_pe.target_exchange_rate = exchange_rate_at_reverse_payment
+		reverse_pe.paid_amount = exchange_rate_at_reverse_payment * amount
+		reverse_pe.received_amount = amount
+		reverse_pe.paid_to = self.debtors_eur
+		reverse_pe.paid_to_account_currency = "EUR"
+		reverse_pe.save().submit()
+
+		# Reconcile payments
+		pr = self.create_payment_reconciliation()
+		pr.party = customer
+		pr.receivable_payable_account = self.debtors_eur
+		pr.get_unreconciled_entries()
+		invoices = [invoice.as_dict() for invoice in pr.invoices]
+		payments = [payment.as_dict() for payment in pr.payments]
+		self.assertEqual(len(pr.get("invoices")), 1)
+		self.assertEqual(len(pr.get("payments")), 1)
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+
+		# Check the difference_amount is a gain of 5000
+		self.assertEqual(flt(pr.allocation[0].get("difference_amount")), 5000.0)
+		pr.reconcile()
+
+	def test_foreign_currency_reverse_payment_entry_against_payment_entry_for_supplier(self):
+		transaction_date = nowdate()
+		self.supplier = "_Test Supplier USD"
+		amount = 1000
+		exchange_rate_at_payment = 100
+		exchange_rate_at_reverse_payment = 95
+
+		# Pay amount to supplier - 1,00,000
+		pe = self.create_payment_entry(amount=amount, posting_date=transaction_date)
+		pe.payment_type = "Pay"
+		pe.party_type = "Supplier"
+		pe.party = self.supplier
+		pe.paid_from = self.cash
+		pe.paid_from_account_currency = "INR"
+		pe.target_exchange_rate = exchange_rate_at_payment
+		pe.paid_amount = exchange_rate_at_payment * amount
+		pe.received_amount = amount
+		pe.paid_to = self.creditors_usd
+		pe.paid_to_account_currency = "USD"
+		pe.save().submit()
+
+		# Receive amount from supplier - 95,000
+		reverse_pe = self.create_payment_entry(amount=amount, posting_date=transaction_date)
+		reverse_pe.payment_type = "Receive"
+		reverse_pe.party_type = "Supplier"
+		reverse_pe.party = self.supplier
+		reverse_pe.paid_from = self.creditors_usd
+		reverse_pe.paid_from_account_currency = "USD"
+		reverse_pe.source_exchange_rate = exchange_rate_at_reverse_payment
+		reverse_pe.paid_amount = amount
+		reverse_pe.received_amount = exchange_rate_at_reverse_payment * amount
+		reverse_pe.paid_to = self.cash
+		reverse_pe.paid_to_account_currency = "INR"
+		reverse_pe = reverse_pe.save().submit()
+
+		# Reconcile payments
+		pr = self.create_payment_reconciliation(party_is_customer=False)
+		pr.party = self.supplier
+		pr.receivable_payable_account = self.creditors_usd
+		pr.get_unreconciled_entries()
+		invoices = [invoice.as_dict() for invoice in pr.invoices]
+		payments = [payment.as_dict() for payment in pr.payments]
+
+		self.assertEqual(len(pr.get("invoices")), 1)
+		self.assertEqual(len(pr.get("payments")), 1)
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+
+		# Check the difference_amount is a loss of 5000
+		self.assertEqual(flt(pr.allocation[0].get("difference_amount")), -5000.0)
+		pr.reconcile()
+
+	def test_foreign_currency_reverse_journal_entry_against_journal_entry_for_customer(self):
+		transaction_date = nowdate()
+		customer = self.customer3
+		amount = 1000
+		exchange_rate_at_payment = 95
+		exchange_rate_at_reverse_payment = 100
+
+		# Receive amount from customer - 95,000
+		je1 = self.create_journal_entry(self.cash, self.debtors_eur, amount, transaction_date)
+		je1.multi_currency = 1
+		je1.accounts[0].exchange_rate = 1
+		je1.accounts[0].debit_in_account_currency = exchange_rate_at_payment * amount
+		je1.accounts[0].debit = exchange_rate_at_payment * amount
+		je1.accounts[1].party_type = "Customer"
+		je1.accounts[1].party = customer
+		je1.accounts[1].exchange_rate = exchange_rate_at_payment
+		je1.accounts[1].credit_in_account_currency = amount
+		je1.accounts[1].credit = exchange_rate_at_payment * amount
+		je1.save()
+		je1.submit()
+
+		# Pay amount to customer - 1,00,000
+		je2 = self.create_journal_entry(self.debtors_eur, self.cash, amount, transaction_date)
+		je2.multi_currency = 1
+		je2.accounts[0].party_type = "Customer"
+		je2.accounts[0].party = customer
+		je2.accounts[0].exchange_rate = exchange_rate_at_reverse_payment
+		je2.accounts[0].debit_in_account_currency = amount
+		je2.accounts[0].debit = exchange_rate_at_reverse_payment * amount
+		je2.accounts[1].exchange_rate = 1
+		je2.accounts[1].credit_in_account_currency = exchange_rate_at_reverse_payment * amount
+		je2.accounts[1].credit = exchange_rate_at_reverse_payment * amount
+		je2.save()
+		je2.submit()
+
+		# Reconcile payments
+		pr = self.create_payment_reconciliation()
+		pr.party = customer
+		pr.receivable_payable_account = self.debtors_eur
+		pr.get_unreconciled_entries()
+
+		self.assertEqual(len(pr.invoices), 1)
+		self.assertEqual(len(pr.payments), 1)
+
+		invoices = [invoice.as_dict() for invoice in pr.invoices]
+		payments = [payment.as_dict() for payment in pr.payments]
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+
+		# Check the difference_amount is a loss of 5000
+		self.assertEqual(flt(pr.allocation[0].difference_amount), -5000.0)
+		pr.reconcile()
+
+	def test_foreign_currency_reverse_journal_entry_against_journal_entry_for_supplier(self):
+		transaction_date = nowdate()
+		self.supplier = "_Test Supplier USD"
+		amount = 1000
+		exchange_rate_at_payment = 95
+		exchange_rate_at_reverse_payment = 100
+
+		# Pay amount to supplier - 95,000
+		je1 = self.create_journal_entry(self.creditors_usd, self.cash, amount, transaction_date)
+		je1.multi_currency = 1
+		je1.accounts[0].party_type = "Supplier"
+		je1.accounts[0].party = self.supplier
+		je1.accounts[0].exchange_rate = exchange_rate_at_payment
+		je1.accounts[0].debit_in_account_currency = amount
+		je1.accounts[0].debit = exchange_rate_at_payment * amount
+		je1.accounts[1].exchange_rate = 1
+		je1.accounts[1].credit = exchange_rate_at_payment * amount
+		je1.accounts[1].credit_in_account_currency = exchange_rate_at_payment * amount
+		je1.save()
+		je1.submit()
+
+		# Receive amount from supplier - 1,00,000
+		je2 = self.create_journal_entry(self.cash, self.creditors_usd, amount, transaction_date)
+		je2.multi_currency = 1
+		je2.accounts[0].exchange_rate = 1
+		je2.accounts[0].debit = exchange_rate_at_reverse_payment * amount
+		je2.accounts[0].debit_in_account_currency = exchange_rate_at_reverse_payment * amount
+		je2.accounts[1].party_type = "Supplier"
+		je2.accounts[1].party = self.supplier
+		je2.accounts[1].exchange_rate = exchange_rate_at_reverse_payment
+		je2.accounts[1].credit_in_account_currency = amount
+		je2.accounts[1].credit = exchange_rate_at_reverse_payment * amount
+		je2.save()
+		je2.submit()
+
+		# Reconcile payments
+		pr = self.create_payment_reconciliation()
+		pr.party_type = "Supplier"
+		pr.party = self.supplier
+		pr.receivable_payable_account = self.creditors_usd
+		pr.get_unreconciled_entries()
+
+		self.assertEqual(len(pr.invoices), 1)
+		self.assertEqual(len(pr.payments), 1)
+
+		invoices = [invoice.as_dict() for invoice in pr.invoices]
+		payments = [payment.as_dict() for payment in pr.payments]
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+
+		# Check the difference_amount is a gain of 5000
+		self.assertEqual(flt(pr.allocation[0].difference_amount), 5000.0)
+		pr.reconcile()
 
 
 def make_customer(customer_name, currency=None):

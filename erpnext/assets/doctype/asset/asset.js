@@ -36,6 +36,7 @@ frappe.ui.form.on("Asset", {
 	},
 
 	company: function (frm) {
+		frm.trigger("set_dynamic_labels");
 		erpnext.accounts.dimensions.update_dimension(frm, frm.doctype);
 	},
 
@@ -81,23 +82,81 @@ frappe.ui.form.on("Asset", {
 	},
 
 	before_submit: function (frm) {
-		if (frm.doc.is_composite_asset && !frm.has_active_capitalization) {
+		if (frm.doc.asset_type == "Composite Asset" && !frm.has_active_capitalization) {
 			frappe.throw(__("Please capitalize this asset before submitting."));
 		}
 	},
 
-	refresh: function (frm) {
-		frappe.ui.form.trigger("Asset", "is_existing_asset");
+	refresh: async function (frm) {
+		frm.trigger("set_dynamic_labels");
+
+		frappe.ui.form.trigger("Asset", "asset_type");
 		frm.toggle_display("next_depreciation_date", frm.doc.docstatus < 1);
 
+		let has_create_buttons = false;
 		if (frm.doc.docstatus == 1) {
+			if (["Submitted", "Partially Depreciated"].includes(frm.doc.status)) {
+				frm.add_custom_button(
+					__("Asset Value Adjustment"),
+					function () {
+						frm.trigger("create_asset_value_adjustment");
+					},
+					__("Create")
+				);
+
+				frm.add_custom_button(
+					__("Asset Repair"),
+					function () {
+						frm.trigger("create_asset_repair");
+					},
+					__("Create")
+				);
+				has_create_buttons = true;
+			}
+
+			if (
+				!frm.doc.calculate_depreciation &&
+				["Submitted", "Partially Depreciated", "Fully Depreciated"].includes(frm.doc.status)
+			) {
+				frm.add_custom_button(
+					__("Depreciation Entry"),
+					function () {
+						frm.trigger("make_journal_entry");
+					},
+					__("Create")
+				);
+				has_create_buttons = true;
+			}
+
+			if (has_create_buttons) {
+				frm.page.set_inner_btn_group_as_primary(__("Create"));
+			}
+
 			if (["Submitted", "Partially Depreciated", "Fully Depreciated"].includes(frm.doc.status)) {
+				if (frm.doc.maintenance_required && !frm.doc.maintenance_schedule) {
+					frm.add_custom_button(
+						__("Maintain Asset"),
+						function () {
+							frm.trigger("create_asset_maintenance");
+						},
+						__("Actions")
+					);
+				}
+
+				frm.add_custom_button(
+					__("Split Asset"),
+					function () {
+						frm.trigger("split_asset");
+					},
+					__("Actions")
+				);
+
 				frm.add_custom_button(
 					__("Transfer Asset"),
 					function () {
 						erpnext.asset.transfer_asset(frm);
 					},
-					__("Manage")
+					__("Actions")
 				);
 
 				frm.add_custom_button(
@@ -105,31 +164,15 @@ frappe.ui.form.on("Asset", {
 					function () {
 						erpnext.asset.scrap_asset(frm);
 					},
-					__("Manage")
+					__("Actions")
 				);
 
 				frm.add_custom_button(
 					__("Sell Asset"),
 					function () {
-						frm.trigger("make_sales_invoice");
+						frm.trigger("sell_asset");
 					},
-					__("Manage")
-				);
-
-				frm.add_custom_button(
-					__("Repair Asset"),
-					function () {
-						frm.trigger("create_asset_repair");
-					},
-					__("Manage")
-				);
-
-				frm.add_custom_button(
-					__("Split Asset"),
-					function () {
-						frm.trigger("split_asset");
-					},
-					__("Manage")
+					__("Actions")
 				);
 			} else if (frm.doc.status == "Scrapped") {
 				frm.add_custom_button(__("Restore Asset"), function () {
@@ -137,39 +180,9 @@ frappe.ui.form.on("Asset", {
 				}).addClass("btn-primary");
 			}
 
-			if (frm.doc.maintenance_required && !frm.doc.maintenance_schedule) {
+			if (await frm.events.should_show_accounting_ledger(frm)) {
 				frm.add_custom_button(
-					__("Maintain Asset"),
-					function () {
-						frm.trigger("create_asset_maintenance");
-					},
-					__("Manage")
-				);
-			}
-
-			if (["Submitted", "Partially Depreciated"].includes(frm.doc.status)) {
-				frm.add_custom_button(
-					__("Adjust Asset Value"),
-					function () {
-						frm.trigger("create_asset_value_adjustment");
-					},
-					__("Manage")
-				);
-			}
-
-			if (!frm.doc.calculate_depreciation) {
-				frm.add_custom_button(
-					__("Create Depreciation Entry"),
-					function () {
-						frm.trigger("make_journal_entry");
-					},
-					__("Manage")
-				);
-			}
-
-			if (frm.doc.purchase_receipt || !frm.doc.is_existing_asset) {
-				frm.add_custom_button(
-					__("View General Ledger"),
+					__("Accounting Ledger"),
 					function () {
 						frappe.route_options = {
 							voucher_no: frm.doc.name,
@@ -179,7 +192,7 @@ frappe.ui.form.on("Asset", {
 						};
 						frappe.set_route("query-report", "General Ledger");
 					},
-					__("Manage")
+					__("View")
 				);
 			}
 
@@ -195,7 +208,7 @@ frappe.ui.form.on("Asset", {
 		if (frm.doc.docstatus == 0) {
 			frm.toggle_reqd("finance_books", frm.doc.calculate_depreciation);
 
-			if (frm.doc.is_composite_asset) {
+			if (frm.doc.asset_type == "Composite Asset") {
 				frappe.call({
 					method: "erpnext.assets.doctype.asset.asset.has_active_capitalization",
 					args: {
@@ -217,6 +230,32 @@ frappe.ui.form.on("Asset", {
 		}
 	},
 
+	set_dynamic_labels: function (frm) {
+		frm.set_currency_labels(["net_purchase_amount"], erpnext.get_currency(frm.doc.company));
+	},
+
+	should_show_accounting_ledger: async function (frm) {
+		if (["Capitalized"].includes(frm.doc.status)) {
+			return false;
+		}
+
+		if (
+			!frm.doc.purchase_receipt &&
+			!frm.doc.purchase_invoice &&
+			["Existing Asset", "Composite Component"].includes(frm.doc.asset_type)
+		) {
+			return false;
+		}
+
+		const asset_category = await frappe.db.get_value(
+			"Asset Category",
+			frm.doc.asset_category,
+			"enable_cwip_accounting"
+		);
+
+		return !!asset_category.message?.enable_cwip_accounting;
+	},
+
 	set_depr_posting_failure_alert: function (frm) {
 		const alert = `
 			<div class="row">
@@ -231,26 +270,65 @@ frappe.ui.form.on("Asset", {
 	},
 
 	toggle_reference_doc: function (frm) {
-		if (frm.doc.purchase_receipt && frm.doc.purchase_invoice && frm.doc.docstatus === 1) {
-			frm.set_df_property("purchase_invoice", "read_only", 1);
-			frm.set_df_property("purchase_receipt", "read_only", 1);
-		} else if (frm.doc.is_existing_asset || frm.doc.is_composite_asset) {
-			frm.toggle_reqd("purchase_receipt", 0);
-			frm.toggle_reqd("purchase_invoice", 0);
-		} else if (frm.doc.purchase_receipt) {
-			// if purchase receipt link is set then set PI disabled
-			frm.toggle_reqd("purchase_invoice", 0);
-			frm.set_df_property("purchase_invoice", "read_only", 1);
-		} else if (frm.doc.purchase_invoice) {
-			// if purchase invoice link is set then set PR disabled
-			frm.toggle_reqd("purchase_receipt", 0);
-			frm.set_df_property("purchase_receipt", "read_only", 1);
-		} else {
-			frm.toggle_reqd("purchase_receipt", 1);
-			frm.set_df_property("purchase_receipt", "read_only", 0);
-			frm.toggle_reqd("purchase_invoice", 1);
-			frm.set_df_property("purchase_invoice", "read_only", 0);
+		const is_submitted = frm.doc.docstatus === 1;
+		const is_special_asset =
+			frm.doc.asset_type == "Existing Asset" || frm.doc.asset_type == "Composite Asset";
+
+		const clear_field = (field) => {
+			if (frm.doc[field]) {
+				frm.set_value(field, "");
+			}
+		};
+
+		["purchase_receipt", "purchase_receipt_item", "purchase_invoice", "purchase_invoice_item"].forEach(
+			(field) => {
+				frm.toggle_reqd(field, 0);
+				frm.set_df_property(field, "read_only", 0);
+			}
+		);
+
+		if (is_submitted) {
+			[
+				"purchase_receipt",
+				"purchase_receipt_item",
+				"purchase_invoice",
+				"purchase_invoice_item",
+			].forEach((field) => {
+				frm.set_df_property(field, "read_only", 1);
+			});
+			return;
 		}
+
+		if (is_special_asset) {
+			clear_field("purchase_receipt");
+			clear_field("purchase_receipt_item");
+			clear_field("purchase_invoice");
+			clear_field("purchase_invoice_item");
+			return;
+		}
+
+		if (frm.doc.purchase_receipt) {
+			frm.toggle_reqd("purchase_receipt_item", 1);
+
+			["purchase_invoice", "purchase_invoice_item"].forEach((field) => {
+				clear_field(field);
+				frm.set_df_property(field, "read_only", 1);
+			});
+			return;
+		}
+
+		if (frm.doc.purchase_invoice) {
+			frm.toggle_reqd("purchase_invoice_item", 1);
+
+			["purchase_receipt", "purchase_receipt_item"].forEach((field) => {
+				clear_field(field);
+				frm.set_df_property(field, "read_only", 1);
+			});
+			return;
+		}
+
+		frm.toggle_reqd("purchase_receipt", 1);
+		frm.toggle_reqd("purchase_invoice", 1);
 	},
 
 	make_journal_entry: function (frm) {
@@ -470,34 +548,15 @@ frappe.ui.form.on("Asset", {
 		});
 	},
 
-	is_existing_asset: function (frm) {
-		frm.trigger("toggle_reference_doc");
-	},
-
-	is_composite_asset: function (frm) {
-		if (frm.doc.is_composite_asset) {
-			frm.set_value("net_purchase_amount", 0);
-		} else {
-			frm.set_df_property("net_purchase_amount", "read_only", 0);
+	asset_type: function (frm) {
+		if (frm.doc.docstatus == 0) {
+			if (frm.doc.asset_type == "Composite Asset") {
+				frm.set_value("net_purchase_amount", 0);
+			} else {
+				frm.set_df_property("net_purchase_amount", "read_only", 0);
+			}
 		}
-
 		frm.trigger("toggle_reference_doc");
-	},
-
-	make_sales_invoice: function (frm) {
-		frappe.call({
-			args: {
-				asset: frm.doc.name,
-				item_code: frm.doc.item_code,
-				company: frm.doc.company,
-				serial_no: frm.doc.serial_no,
-			},
-			method: "erpnext.assets.doctype.asset.asset.make_sales_invoice",
-			callback: function (r) {
-				var doclist = frappe.model.sync(r.message);
-				frappe.set_route("Form", doclist[0].doctype, doclist[0].name);
-			},
-		});
 	},
 
 	create_asset_maintenance: function (frm) {
@@ -546,6 +605,69 @@ frappe.ui.form.on("Asset", {
 				frappe.set_route("Form", doclist[0].doctype, doclist[0].name);
 			},
 		});
+	},
+
+	sell_asset: function (frm) {
+		const make_sales_invoice = (sell_qty) => {
+			frappe.call({
+				method: "erpnext.assets.doctype.asset.asset.make_sales_invoice",
+				args: {
+					asset: frm.doc.name,
+					item_code: frm.doc.item_code,
+					company: frm.doc.company,
+					serial_no: frm.doc.serial_no,
+					sell_qty: sell_qty,
+				},
+				callback: function (r) {
+					var doclist = frappe.model.sync(r.message);
+					frappe.set_route("Form", doclist[0].doctype, doclist[0].name);
+				},
+			});
+		};
+
+		let dialog = new frappe.ui.Dialog({
+			title: __("Sell Asset"),
+			fields: [
+				{
+					fieldname: "sell_qty",
+					fieldtype: "Int",
+					label: __("Sell Qty"),
+					reqd: 1,
+				},
+			],
+		});
+
+		dialog.set_primary_action(__("Sell"), function () {
+			const dialog_data = dialog.get_values();
+			const sell_qty = cint(dialog_data.sell_qty);
+			const asset_qty = cint(frm.doc.asset_quantity);
+
+			if (sell_qty <= 0) {
+				frappe.throw(__("Sell quantity must be greater than zero"));
+			}
+
+			if (sell_qty > asset_qty) {
+				frappe.throw(__("Sell quantity cannot exceed the asset quantity"));
+			}
+
+			if (sell_qty < asset_qty) {
+				frappe.confirm(
+					__(
+						"The sell quantity is less than the total asset quantity. The remaining quantity will be split into a new asset. This action cannot be undone. <br><br><b>Do you want to continue?</b>"
+					),
+					() => {
+						make_sales_invoice(sell_qty);
+						dialog.hide();
+					}
+				);
+				return;
+			}
+
+			make_sales_invoice(sell_qty);
+			dialog.hide();
+		});
+
+		dialog.show();
 	},
 
 	split_asset: function (frm) {

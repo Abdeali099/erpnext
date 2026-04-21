@@ -15,7 +15,6 @@ from erpnext.accounts.report.financial_statements import (
 	validate_fiscal_year,
 )
 from erpnext.accounts.utils import get_fiscal_year
-from erpnext.assets.doctype.asset.asset import get_asset_value_after_depreciation
 
 
 def execute(filters=None):
@@ -144,7 +143,7 @@ def get_conditions(filters):
 		conditions[date_field] = ["between", [filters.year_start_date, filters.year_end_date]]
 
 	if filters.get("only_existing_assets"):
-		conditions["is_existing_asset"] = filters.get("only_existing_assets")
+		conditions["asset_type"] = "Existing Asset"
 	if filters.get("asset_category"):
 		conditions["asset_category"] = filters.get("asset_category")
 	if filters.get("cost_center"):
@@ -274,7 +273,7 @@ def get_asset_depreciation_amount_map(filters, finance_book):
 	)
 
 	if filters.only_existing_assets:
-		query = query.where(asset.is_existing_asset == 1)
+		query = query.where(asset.asset_type == "Existing Asset")
 	if filters.asset_category:
 		query = query.where(asset.asset_category == filters.asset_category)
 	if filters.cost_center:
@@ -325,7 +324,7 @@ def get_asset_value_adjustment_map(filters, finance_book):
 	)
 
 	if filters.only_existing_assets:
-		query = query.where(asset.is_existing_asset == 1)
+		query = query.where(asset.asset_type == "Existing Asset")
 	if filters.asset_category:
 		query = query.where(asset.asset_category == filters.asset_category)
 	if filters.cost_center:

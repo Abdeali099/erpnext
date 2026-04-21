@@ -1,11 +1,9 @@
 # Copyright (c) 2017, Frappe Technologies Pvt. Ltd. and Contributors
 # See license.txt
-import unittest
 
 import frappe
 from frappe import qb
 from frappe.query_builder.functions import Sum
-from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, add_months, flt, get_first_day, nowdate, nowtime, today
 
 from erpnext.assets.doctype.asset.asset import (
@@ -15,7 +13,6 @@ from erpnext.assets.doctype.asset.asset import (
 )
 from erpnext.assets.doctype.asset.test_asset import (
 	create_asset,
-	create_asset_data,
 	set_depreciation_settings_in_company,
 )
 from erpnext.assets.doctype.asset_depreciation_schedule.asset_depreciation_schedule import (
@@ -26,16 +23,14 @@ from erpnext.stock.doctype.serial_and_batch_bundle.test_serial_and_batch_bundle 
 	get_serial_nos_from_bundle,
 	make_serial_batch_bundle,
 )
+from erpnext.tests.utils import ERPNextTestSuite
 
 
-class TestAssetRepair(IntegrationTestCase):
-	@classmethod
-	def setUpClass(cls):
-		super().setUpClass()
+class TestAssetRepair(ERPNextTestSuite):
+	def setUp(self):
+		self.load_test_records("Stock Entry")
 		set_depreciation_settings_in_company()
-		create_asset_data()
 		create_item("_Test Stock Item")
-		frappe.db.sql("delete from `tabTax Rule`")
 
 	def test_asset_status(self):
 		date = nowdate()
@@ -51,7 +46,9 @@ class TestAssetRepair(IntegrationTestCase):
 			submit=1,
 		)
 
-		si = make_sales_invoice(asset=asset.name, item_code="Macbook Pro", company="_Test Company")
+		si = make_sales_invoice(
+			asset=asset.name, item_code="Macbook Pro", company="_Test Company", sell_qty=asset.asset_quantity
+		)
 		si.customer = "_Test Customer"
 		si.due_date = date
 		si.get("items")[0].rate = 25000
@@ -209,26 +206,29 @@ class TestAssetRepair(IntegrationTestCase):
 		self.assertRaises(frappe.ValidationError, asset_repair2.save)
 
 	def test_gl_entries_with_perpetual_inventory(self):
-		set_depreciation_settings_in_company(company="_Test Company with perpetual inventory")
+		company = "_Test Company with perpetual inventory"
+		set_depreciation_settings_in_company(company)
 
 		asset_category = frappe.get_doc("Asset Category", "Computers")
-		asset_category.append(
-			"accounts",
-			{
-				"company_name": "_Test Company with perpetual inventory",
-				"fixed_asset_account": "_Test Fixed Asset - TCP1",
-				"accumulated_depreciation_account": "_Test Accumulated Depreciations - TCP1",
-				"depreciation_expense_account": "_Test Depreciations - TCP1",
-				"capital_work_in_progress_account": "CWIP Account - TCP1",
-			},
-		)
-		asset_category.save()
+
+		if not any(row.company_name == company for row in asset_category.accounts):
+			asset_category.append(
+				"accounts",
+				{
+					"company_name": company,
+					"fixed_asset_account": "_Test Fixed Asset - TCP1",
+					"accumulated_depreciation_account": "_Test Accumulated Depreciations - TCP1",
+					"depreciation_expense_account": "_Test Depreciations - TCP1",
+					"capital_work_in_progress_account": "CWIP Account - TCP1",
+				},
+			)
+			asset_category.save()
 
 		asset_repair = create_asset_repair(
 			capitalize_repair_cost=1,
 			stock_consumption=1,
 			warehouse="Stores - TCP1",
-			company="_Test Company with perpetual inventory",
+			company=company,
 			pi_expense_account1="Administrative Expenses - TCP1",
 			pi_expense_account2="Legal Expenses - TCP1",
 			item="_Test Non Stock Item",
@@ -358,7 +358,7 @@ class TestAssetRepair(IntegrationTestCase):
 		self.assertEqual(stock_entry.asset_repair, asset_repair.name)
 
 	def test_gl_entries_with_capitalized_asset_repair(self):
-		asset = create_asset(is_existing_asset=1, calculate_depreciation=1, submit=1)
+		asset = create_asset(asset_type="Existing Asset", calculate_depreciation=1, submit=1)
 		asset_repair = create_asset_repair(
 			asset=asset, capitalize_repair_cost=1, item="_Test Non Stock Item", submit=1
 		)
@@ -398,7 +398,7 @@ def create_asset_repair(**args):
 	if args.asset:
 		asset = args.asset
 	else:
-		asset = create_asset(is_existing_asset=1, submit=1, company=args.company)
+		asset = create_asset(asset_type=args.asset_type or "Existing Asset", submit=1, company=args.company)
 	asset_repair = frappe.new_doc("Asset Repair")
 	asset_repair.update(
 		{

@@ -8,7 +8,7 @@ app_email = "hello@frappe.io"
 app_license = "GNU General Public License (v3)"
 source_link = "https://github.com/frappe/erpnext"
 app_logo_url = "/assets/erpnext/images/erpnext-logo.svg"
-app_home = "/app/home"
+app_home = "/desk"
 
 add_to_apps_screen = [
 	{
@@ -20,7 +20,7 @@ add_to_apps_screen = [
 	}
 ]
 
-develop_version = "15.x.x-develop"
+develop_version = "17.x.x-develop"
 
 app_include_js = "erpnext.bundle.js"
 app_include_css = "erpnext.bundle.css"
@@ -62,8 +62,6 @@ welcome_email = "erpnext.setup.utils.welcome_email"
 # setup wizard
 setup_wizard_requires = "assets/erpnext/js/setup_wizard.js"
 setup_wizard_stages = "erpnext.setup.setup_wizard.setup_wizard.get_setup_stages"
-setup_wizard_complete = "erpnext.setup.setup_wizard.setup_wizard.setup_demo"
-setup_wizard_test = "erpnext.setup.setup_wizard.test_setup_wizard.run_setup_wizard_test"
 
 after_install = "erpnext.setup.install.after_install"
 
@@ -219,6 +217,17 @@ website_route_rules = [
 	{"from_route": "/tasks", "to_route": "Task"},
 ]
 
+standard_navbar_items = [
+	{
+		"item_label": "Delete Demo Data",
+		"item_type": "Action",
+		"action": "erpnext.demo.clear_demo();",
+		"is_standard": 1,
+		"condition": "eval: frappe.boot.sysdefaults.demo_company && frappe.boot.sysdefaults.demo_company.length > 0",
+		"icon": "trash",
+	},
+]
+
 standard_portal_menu_items = [
 	{"title": "Projects", "route": "/project", "reference_doctype": "Project", "role": "Customer"},
 	{
@@ -270,7 +279,7 @@ standard_portal_menu_items = [
 		"role": "Customer",
 	},
 	{"title": "Issues", "route": "/issues", "reference_doctype": "Issue", "role": "Customer"},
-	{"title": "Addresses", "route": "/addresses", "reference_doctype": "Address"},
+	{"title": "Addresses", "route": "/addresses", "reference_doctype": "Address", "role": "Customer"},
 	{
 		"title": "Timesheets",
 		"route": "/timesheets",
@@ -308,8 +317,6 @@ has_website_permission = {
 	"Timesheet": "erpnext.controllers.website_list_for_contact.has_website_permission",
 	"Project": "erpnext.controllers.website_list_for_contact.has_website_permission",
 }
-
-before_tests = "erpnext.setup.utils.before_tests"
 
 
 period_closing_doctypes = [
@@ -402,16 +409,25 @@ doc_events = {
 }
 
 # function should expect the variable and doc as arguments
+naming_series_variables_list = ["FY", "TFY", "ABBR", "MM", "DD", "YY", "YYYY", "JJJ", "WW"]
 naming_series_variables = {
-	"FY": "erpnext.accounts.utils.parse_naming_series_variable",
-	"ABBR": "erpnext.accounts.utils.parse_naming_series_variable",
+	variable: "erpnext.accounts.utils.parse_naming_series_variable"
+	for variable in naming_series_variables_list
 }
 
-# On cancel event Payment Entry will be exempted and all linked submittable doctype will get cancelled.
-# to maintain data integrity we exempted payment entry. it will un-link when sales invoice get cancelled.
-# if payment entry not in auto cancel exempted doctypes it will cancel payment entry.
 auto_cancel_exempted_doctypes = [
+	# On cancel event Payment Entry will be exempted and all linked submittable doctype will get cancelled.
+	# to maintain data integrity we exempted payment entry. it will un-link when sales invoice get cancelled.
+	# if payment entry not in auto cancel exempted doctypes it will cancel payment entry.
 	"Payment Entry",
+	# Reverse ledger entries are created instead to ensure ledger immutability.
+	"GL Entry",
+	"Stock Ledger Entry",
+	"Payment Ledger Entry",
+	"Advance Payment Ledger Entry",
+	# May be linked to Period Closing Voucher, but cancelled with custom logic in PCV.
+	# This is better to avoid stale docs when cancelling PCV from backend.
+	"Account Closing Balance",
 ]
 
 scheduler_events = {
@@ -533,6 +549,7 @@ accounting_dimension_doctypes = [
 	"Purchase Order Item",
 	"Sales Order Item",
 	"Journal Entry Account",
+	"Journal Entry Template Account",
 	"Material Request Item",
 	"Delivery Note Item",
 	"Purchase Receipt Item",
@@ -569,7 +586,10 @@ accounting_dimension_doctypes = [
 	"Payment Request",
 	"Asset Movement Item",
 	"Asset Depreciation Schedule",
+	"Advance Taxes and Charges",
 ]
+
+subscription_doctypes = ["Sales Invoice", "Purchase Invoice", "Payment Request", "POS Invoice"]
 
 get_matching_queries = (
 	"erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool.get_matching_queries"
@@ -682,3 +702,12 @@ fields_for_group_similar_items = ["qty", "amount"]
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 ignore_translatable_strings_from = ["frappe"]
+require_type_annotated_api_methods = True
+
+repost_allowed_doctypes = [
+	"Sales Invoice",
+	"Purchase Invoice",
+	"Journal Entry",
+	"Payment Entry",
+	"Purchase Receipt",
+]

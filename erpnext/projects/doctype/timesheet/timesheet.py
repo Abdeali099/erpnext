@@ -51,7 +51,9 @@ class Timesheet(Document):
 		per_billed: DF.Percent
 		sales_invoice: DF.Link | None
 		start_date: DF.Date | None
-		status: DF.Literal["Draft", "Submitted", "Billed", "Payslip", "Completed", "Cancelled"]
+		status: DF.Literal[
+			"Draft", "Submitted", "Partially Billed", "Billed", "Payslip", "Completed", "Cancelled"
+		]
 		time_logs: DF.Table[TimesheetDetail]
 		title: DF.Data | None
 		total_billable_amount: DF.Currency
@@ -72,6 +74,14 @@ class Timesheet(Document):
 		self.calculate_total_amounts()
 		self.calculate_percentage_billed()
 		self.set_dates()
+
+	def on_discard(self):
+		self.db_set("status", "Cancelled")
+
+	def on_update_after_submit(self):
+		self.validate_mandatory_fields()
+		self.update_task_and_project()
+		self.validate_time_logs()
 
 	def calculate_hours(self):
 		for row in self.time_logs:
@@ -119,6 +129,9 @@ class Timesheet(Document):
 
 		if flt(self.per_billed, self.precision("per_billed")) >= 100.0:
 			self.status = "Billed"
+
+		if 0.0 < flt(self.per_billed, self.precision("per_billed")) < 100.0:
+			self.status = "Partially Billed"
 
 		if self.sales_invoice:
 			self.status = "Completed"
@@ -289,7 +302,12 @@ class Timesheet(Document):
 
 
 @frappe.whitelist()
-def get_projectwise_timesheet_data(project=None, parent=None, from_time=None, to_time=None):
+def get_projectwise_timesheet_data(
+	project: str | None = None,
+	parent: str | None = None,
+	from_time: str | None = None,
+	to_time: str | None = None,
+):
 	condition = ""
 	if project:
 		condition += "AND tsd.project = %(project)s "
@@ -328,7 +346,7 @@ def get_projectwise_timesheet_data(project=None, parent=None, from_time=None, to
 
 
 @frappe.whitelist()
-def get_timesheet_detail_rate(timelog, currency):
+def get_timesheet_detail_rate(timelog: str, currency: str):
 	ts = frappe.qb.DocType("Timesheet")
 	ts_detail = frappe.qb.DocType("Timesheet Detail")
 
@@ -350,7 +368,7 @@ def get_timesheet_detail_rate(timelog, currency):
 
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
-def get_timesheet(doctype, txt, searchfield, start, page_len, filters):
+def get_timesheet(doctype: str, txt: str, searchfield: str, start: int, page_len: int, filters: dict):
 	if not filters:
 		filters = {}
 
@@ -375,7 +393,7 @@ def get_timesheet(doctype, txt, searchfield, start, page_len, filters):
 
 
 @frappe.whitelist()
-def get_timesheet_data(name, project):
+def get_timesheet_data(name: str, project: str):
 	data = None
 	if project and project != "":
 		data = get_projectwise_timesheet_data(project, name)
@@ -396,7 +414,9 @@ def get_timesheet_data(name, project):
 
 
 @frappe.whitelist()
-def make_sales_invoice(source_name, item_code=None, customer=None, currency=None):
+def make_sales_invoice(
+	source_name: str, item_code: str | None = None, customer: str | None = None, currency: str | None = None
+):
 	target = frappe.new_doc("Sales Invoice")
 	timesheet = frappe.get_doc("Timesheet", source_name)
 
@@ -425,7 +445,7 @@ def make_sales_invoice(source_name, item_code=None, customer=None, currency=None
 		target.append("items", {"item_code": item_code, "qty": hours, "rate": billing_rate})
 
 	for time_log in timesheet.time_logs:
-		if time_log.is_billable:
+		if time_log.is_billable and not time_log.sales_invoice:
 			target.append(
 				"timesheets",
 				{
@@ -448,7 +468,9 @@ def make_sales_invoice(source_name, item_code=None, customer=None, currency=None
 
 
 @frappe.whitelist()
-def get_activity_cost(employee=None, activity_type=None, currency=None):
+def get_activity_cost(
+	employee: str | None = None, activity_type: str | None = None, currency: str | None = None
+):
 	base_currency = frappe.defaults.get_global_default("currency")
 	rate = frappe.db.get_values(
 		"Activity Cost",
@@ -472,13 +494,13 @@ def get_activity_cost(employee=None, activity_type=None, currency=None):
 
 
 @frappe.whitelist()
-def get_events(start, end, filters=None):
+def get_events(start: str, end: str, filters: str | None = None):
 	"""Returns events for Gantt / Calendar view rendering.
 	:param start: Start date-time.
 	:param end: End date-time.
 	:param filters: Filters (JSON).
 	"""
-	filters = json.loads(filters)
+	filters = json.loads(filters) if filters else {}
 	from frappe.desk.calendar import get_event_conditions
 
 	conditions = get_event_conditions("Timesheet", filters)

@@ -74,6 +74,7 @@ frappe.query_reports["General Ledger"] = {
 			label: __("Party"),
 			fieldtype: "MultiSelectList",
 			options: "party_type",
+			depends_on: "party_type",
 			get_data: function (txt) {
 				if (!frappe.query_report.filters) return;
 
@@ -224,7 +225,7 @@ frappe.query_reports["General Ledger"] = {
 		},
 	],
 	collapsible_filters: true,
-	seperate_check_filters: true,
+	separate_check_filters: true,
 };
 
 erpnext.utils.add_dimensions("General Ledger", 15);

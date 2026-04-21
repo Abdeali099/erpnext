@@ -16,10 +16,15 @@
   "invoicing_features_section",
   "check_supplier_invoice_uniqueness",
   "automatically_fetch_payment_terms",
+  "enable_subscription",
   "column_break_17",
   "enable_common_party_accounting",
   "allow_multi_currency_invoices_against_single_party_account",
   "confirm_before_resetting_posting_date",
+  "analytics_section",
+  "enable_accounting_dimensions",
+  "column_break_vtnr",
+  "enable_discounts_and_margin",
   "journals_section",
   "merge_similar_account_heads",
   "deferred_accounting_settings_section",
@@ -51,12 +56,19 @@
   "allow_pegged_currencies_exchange_rates",
   "column_break_yuug",
   "stale_days",
+  "payments_tab",
   "section_break_jpd0",
   "auto_reconcile_payments",
   "auto_reconciliation_job_trigger",
   "reconciliation_queue_size",
   "column_break_resa",
   "exchange_gain_loss_posting_date",
+  "repost_section",
+  "repost_allowed_types",
+  "payment_options_section",
+  "enable_loyalty_point_program",
+  "column_break_ctam",
+  "fetch_payment_schedule_in_payment_request",
   "invoicing_settings_tab",
   "accounts_transactions_settings_section",
   "over_billing_allowance",
@@ -64,10 +76,6 @@
   "role_allowed_to_over_bill",
   "credit_controller",
   "make_payment_via_journal_entry",
-  "pos_tab",
-  "pos_setting_section",
-  "post_change_gl_entries",
-  "column_break_xrnd",
   "assets_tab",
   "asset_settings_section",
   "calculate_depr_using_total_days",
@@ -79,11 +87,6 @@
   "ignore_account_closing_balance",
   "use_legacy_controller_for_pcv",
   "column_break_25",
-  "tab_break_dpet",
-  "show_balance_in_coa",
-  "banking_tab",
-  "enable_party_matching",
-  "enable_fuzzy_matching",
   "reports_tab",
   "remarks_section",
   "general_ledger_remarks_length",
@@ -91,13 +94,20 @@
   "receivable_payable_remarks_length",
   "accounts_receivable_payable_tuning_section",
   "receivable_payable_fetch_method",
+  "default_ageing_range",
   "column_break_ntmi",
   "drop_ar_procedures",
   "legacy_section",
   "ignore_is_opening_check_for_reporting",
-  "payment_request_settings",
+  "tab_break_dpet",
+  "chart_of_accounts_section",
+  "show_balance_in_coa",
+  "banking_section",
+  "enable_party_matching",
+  "enable_fuzzy_matching",
+  "payment_request_section",
   "create_pr_in_draft_status",
-  "budget_settings",
+  "budget_section",
   "use_legacy_budget_controller"
  ],
  "fields": [
@@ -199,7 +209,7 @@
    "description": "Payment Terms from orders will be fetched into the invoices as is",
    "fieldname": "automatically_fetch_payment_terms",
    "fieldtype": "Check",
-   "label": "Automatically Fetch Payment Terms from Order"
+   "label": "Automatically Fetch Payment Terms from Order/Quotation"
   },
   {
    "description": "The percentage you are allowed to bill more against the amount ordered. For example, if the order value is $100 for an item and tolerance is set as 10%, then you are allowed to bill up to $110 ",
@@ -282,15 +292,8 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "1",
-   "description": "If enabled, ledger entries will be posted for change amount in POS transactions",
-   "fieldname": "post_change_gl_entries",
-   "fieldtype": "Check",
-   "label": "Create Ledger Entries for Change Amount"
-  },
-  {
    "default": "0",
-   "description": "Learn about <a href=\"https://docs.erpnext.com/docs/v13/user/manual/en/accounts/articles/common_party_accounting#:~:text=Common%20Party%20Accounting%20in%20ERPNext,Invoice%20against%20a%20primary%20Supplier.\">Common Party</a>",
+   "description": "Learn about <a href=\"https://docs.frappe.io/erpnext/user/manual/en/common_party_accounting\" rel=\"noopener noreferrer\">Common Party</a>",
    "fieldname": "enable_common_party_accounting",
    "fieldtype": "Check",
    "label": "Enable Common Party Accounting"
@@ -329,11 +332,6 @@
    "label": "Accounts Closing"
   },
   {
-   "fieldname": "pos_setting_section",
-   "fieldtype": "Section Break",
-   "label": "POS Setting"
-  },
-  {
    "fieldname": "invoice_and_billing_tab",
    "fieldtype": "Tab Break",
    "label": "Invoice and Billing"
@@ -348,11 +346,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "pos_tab",
-   "fieldtype": "Tab Break",
-   "label": "POS"
-  },
-  {
    "default": "0",
    "description": "Enabling this will allow creation of multi-currency invoices against single party account in company currency",
    "fieldname": "allow_multi_currency_invoices_against_single_party_account",
@@ -362,7 +355,7 @@
   {
    "fieldname": "tab_break_dpet",
    "fieldtype": "Tab Break",
-   "label": "Chart Of Accounts"
+   "label": "Others"
   },
   {
    "default": "1",
@@ -405,11 +398,6 @@
    "fieldname": "show_taxes_as_table_in_print",
    "fieldtype": "Check",
    "label": "Show Taxes as Table in Print"
-  },
-  {
-   "fieldname": "banking_tab",
-   "fieldtype": "Tab Break",
-   "label": "Banking"
   },
   {
    "default": "0",
@@ -487,13 +475,8 @@
    "label": "Calculate daily depreciation using total days in depreciation period"
   },
   {
-   "description": "Payment Request created from Sales Order or Purchase Order will be in Draft status. When disabled document will be in unsaved state.",
-   "fieldname": "payment_request_settings",
-   "fieldtype": "Tab Break",
-   "label": "Payment Request"
-  },
-  {
    "default": "1",
+   "description": "Payment Requests made from Sales / Purchase Invoice will be put in Draft explicitly",
    "fieldname": "create_pr_in_draft_status",
    "fieldtype": "Check",
    "label": "Create in Draft Status"
@@ -536,10 +519,6 @@
    "options": "Invoice\nPayment\nReconciliation Date"
   },
   {
-   "fieldname": "column_break_xrnd",
-   "fieldtype": "Column Break"
-  },
-  {
    "default": "Buffered Cursor",
    "fieldname": "receivable_payable_fetch_method",
    "fieldtype": "Select",
@@ -577,11 +556,6 @@
    "fieldtype": "Link",
    "label": "Role Allowed to Override Stop Action",
    "options": "Role"
-  },
-  {
-   "fieldname": "budget_settings",
-   "fieldtype": "Tab Break",
-   "label": "Budget"
   },
   {
    "default": "1",
@@ -649,6 +623,99 @@
    "fieldtype": "Link",
    "label": "Role to Notify on Depreciation Failure",
    "options": "Role"
+  },
+  {
+   "default": "30, 60, 90, 120",
+   "fieldname": "default_ageing_range",
+   "fieldtype": "Data",
+   "label": "Default Ageing Range"
+  },
+  {
+   "fieldname": "chart_of_accounts_section",
+   "fieldtype": "Section Break",
+   "label": "Chart Of Accounts"
+  },
+  {
+   "fieldname": "banking_section",
+   "fieldtype": "Section Break",
+   "label": "Banking"
+  },
+  {
+   "fieldname": "payment_request_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Request"
+  },
+  {
+   "fieldname": "budget_section",
+   "fieldtype": "Section Break",
+   "label": "Budget"
+  },
+  {
+   "fieldname": "analytics_section",
+   "fieldtype": "Section Break",
+   "label": "Analytical Accounting"
+  },
+  {
+   "fieldname": "column_break_vtnr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Apply discounts and margins on products",
+   "fieldname": "enable_discounts_and_margin",
+   "fieldtype": "Check",
+   "label": "Enable Discounts and Margin"
+  },
+  {
+   "fieldname": "payments_tab",
+   "fieldtype": "Tab Break",
+   "label": "Payments"
+  },
+  {
+   "fieldname": "payment_options_section",
+   "fieldtype": "Section Break",
+   "label": "Payment Options"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_loyalty_point_program",
+   "fieldtype": "Check",
+   "label": "Enable Loyalty Point Program"
+  },
+  {
+   "fieldname": "column_break_ctam",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Enable cost center, projects and other custom accounting dimensions",
+   "fieldname": "enable_accounting_dimensions",
+   "fieldtype": "Check",
+   "label": "Enable Accounting Dimensions"
+  },
+  {
+   "default": "1",
+   "description": "Enable Subscription tracking in invoice",
+   "fieldname": "enable_subscription",
+   "fieldtype": "Check",
+   "label": "Enable Subscription"
+  },
+  {
+   "default": "1",
+   "fieldname": "fetch_payment_schedule_in_payment_request",
+   "fieldtype": "Check",
+   "label": "Fetch Payment Schedule In Payment Request"
+  },
+  {
+   "fieldname": "repost_section",
+   "fieldtype": "Section Break",
+   "label": "Repost"
+  },
+  {
+   "fieldname": "repost_allowed_types",
+   "fieldtype": "Table",
+   "label": "Allowed Doctypes",
+   "options": "Repost Allowed Types"
   }
  ],
  "grid_page_length": 50,
@@ -657,7 +724,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-12-03 20:42:13.238050",
+ "modified": "2026-04-13 15:30:28.729627",
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Accounts Settings",

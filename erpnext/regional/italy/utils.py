@@ -31,7 +31,7 @@ def update_itemised_tax_data(doc):
 
 
 @frappe.whitelist()
-def export_invoices(filters=None):
+def export_invoices(filters: str | None = None):
 	frappe.has_permission("Sales Invoice", throw=True)
 
 	invoices = frappe.get_all(
@@ -142,7 +142,14 @@ def download_zip(files, output_filename):
 
 def get_invoice_summary(items, taxes, item_wise_tax_details):
 	summary_data = frappe._dict()
-	taxes_wise_tax_details = {d.tax_row: d for d in item_wise_tax_details}
+	taxes_wise_tax_details = {}
+
+	for d in item_wise_tax_details:
+		if d.tax_row not in taxes_wise_tax_details:
+			taxes_wise_tax_details[d.tax_row] = []
+
+		taxes_wise_tax_details[d.tax_row].append(d)
+
 	for tax in taxes:
 		# Include only VAT charges.
 		if tax.charge_type == "Actual":
@@ -352,7 +359,7 @@ def prepare_and_attach_invoice(doc, replace=False):
 
 
 @frappe.whitelist()
-def generate_single_invoice(docname):
+def generate_single_invoice(docname: str):
 	doc = frappe.get_doc("Sales Invoice", docname)
 	frappe.has_permission("Sales Invoice", doc=doc, throw=True)
 

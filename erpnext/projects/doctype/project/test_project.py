@@ -2,7 +2,6 @@
 # License: GNU General Public License v3. See license.txt
 
 import frappe
-from frappe.tests import IntegrationTestCase
 from frappe.utils import add_days, getdate, nowdate
 
 from erpnext.projects.doctype.project_template.test_project_template import make_project_template
@@ -11,21 +10,14 @@ from erpnext.selling.doctype.sales_order.sales_order import make_project as make
 from erpnext.selling.doctype.sales_order.test_sales_order import make_sales_order
 from erpnext.tests.utils import ERPNextTestSuite
 
-IGNORE_TEST_RECORD_DEPENDENCIES = ["Sales Order"]
-
 
 class TestProject(ERPNextTestSuite):
-	@classmethod
-	def setUpClass(cls):
-		super().setUpClass()
-		cls.make_projects()
-
 	def test_project_total_costing_and_billing_amount(self):
 		from erpnext.projects.doctype.timesheet.test_timesheet import make_timesheet
 		from erpnext.setup.doctype.employee.test_employee import make_employee
 
 		project_name = "Test Project Costing"
-		employee = make_employee("employee@frappe.io")
+		employee = make_employee("employee@frappe.io", company="_Test Company")
 		project = make_project({"project_name": project_name})
 		timesheet = make_timesheet(
 			employee=employee,
@@ -255,14 +247,12 @@ class TestProject(ERPNextTestSuite):
 
 def get_project(name, template):
 	project = frappe.get_doc(
-		dict(
-			doctype="Project",
-			project_name=name,
-			status="Open",
-			project_template=template.name,
-			expected_start_date=nowdate(),
-			company="_Test Company",
-		)
+		doctype="Project",
+		project_name=name,
+		status="Open",
+		project_template=template.name,
+		expected_start_date=nowdate(),
+		company="_Test Company",
 	).insert()
 
 	return project
@@ -275,13 +265,11 @@ def make_project(args):
 		return frappe.get_doc("Project", {"project_name": args.project_name})
 
 	project = frappe.get_doc(
-		dict(
-			doctype="Project",
-			project_name=args.project_name,
-			status="Open",
-			expected_start_date=args.start_date,
-			company=args.company or "_Test Company",
-		)
+		doctype="Project",
+		project_name=args.project_name,
+		status="Open",
+		expected_start_date=args.start_date,
+		company=args.company or "_Test Company",
 	)
 
 	if args.project_template_name:

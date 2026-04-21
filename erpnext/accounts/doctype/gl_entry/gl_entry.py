@@ -193,7 +193,6 @@ class GLEntry(Document):
 				account_type == "Profit and Loss"
 				and self.company == dimension.company
 				and dimension.mandatory_for_pl
-				and not dimension.disabled
 				and not self.is_cancelled
 			):
 				if not self.get(dimension.fieldname):
@@ -207,7 +206,6 @@ class GLEntry(Document):
 				account_type == "Balance Sheet"
 				and self.company == dimension.company
 				and dimension.mandatory_for_bs
-				and not dimension.disabled
 				and not self.is_cancelled
 			):
 				if not self.get(dimension.fieldname):
@@ -491,4 +489,5 @@ def rename_temporarily_named_docs(doctype):
 				for hook in frappe.get_hooks(hook_type):
 					frappe.call(hook, newname=newname, oldname=oldname)
 
-		frappe.db.commit()
+		if not frappe.in_test:
+			frappe.db.commit()

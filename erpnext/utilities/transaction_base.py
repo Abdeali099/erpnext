@@ -9,7 +9,7 @@ from frappe.utils import cint, flt, get_time, now_datetime
 
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import get_dimensions
 from erpnext.controllers.status_updater import StatusUpdater
-from erpnext.stock.get_item_details import get_item_details
+from erpnext.stock.get_item_details import NOT_APPLICABLE_TAX, get_item_details
 from erpnext.stock.utils import get_incoming_rate
 
 
@@ -263,7 +263,7 @@ class TransactionBase(StatusUpdater):
 					"company": self.get("company"),
 					"order_type": self.get("order_type"),
 					"is_pos": cint(self.get("is_pos")),
-					"is_return": cint(self.get("is_return)")),
+					"is_return": cint(self.get("is_return")),
 					"is_subcontracted": self.get("is_subcontracted"),
 					"ignore_pricing_rule": self.get("ignore_pricing_rule"),
 					"doctype": self.get("doctype"),
@@ -287,13 +287,17 @@ class TransactionBase(StatusUpdater):
 					"child_docname": item.get("name"),
 					"is_old_subcontracting_flow": self.get("is_old_subcontracting_flow"),
 				}
-			)
+			),
+			self,
 		)
 
 	@frappe.whitelist()
-	def process_item_selection(self, item_idx):
+	def process_item_selection(self, item_idx: int):
 		# Server side 'item' doc. Update this to reflect in UI
 		item_obj = self.get("items", {"idx": item_idx})[0]
+
+		if not item_obj.item_code:
+			return
 
 		# 'item_details' has latest item related values
 		item_details = self.fetch_item_details(item_obj)
@@ -338,6 +342,7 @@ class TransactionBase(StatusUpdater):
 				args.update(
 					{
 						"posting_date": self.transaction_date,
+						"posting_time": self.transaction_time,
 					}
 				)
 			else:
@@ -362,6 +367,9 @@ class TransactionBase(StatusUpdater):
 		):
 			item_tax_template = frappe.json.loads(item_details.item_tax_rate)
 			for tax_head, _rate in item_tax_template.items():
+				if _rate == NOT_APPLICABLE_TAX:
+					continue
+
 				found = [x for x in self.taxes if x.account_head == tax_head]
 				if not found:
 					self.append("taxes", {"charge_type": "On Net Total", "account_head": tax_head, "rate": 0})

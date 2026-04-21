@@ -36,14 +36,14 @@ erpnext.utils.get_party_details = function (frm, method, args, callback) {
 		}
 
 		if (!args) {
-			if (in_list(SALES_DOCTYPES, frm.doc.doctype)) {
+			if (SALES_DOCTYPES.includes(frm.doc.doctype)) {
 				args = {
 					party: frm.doc.customer || frm.doc.party_name,
 					party_type: "Customer",
 				};
 			}
 
-			if (in_list(PURCHASE_DOCTYPES, frm.doc.doctype)) {
+			if (PURCHASE_DOCTYPES.includes(frm.doc.doctype)) {
 				args = {
 					party: frm.doc.supplier,
 					party_type: "Supplier",
@@ -57,13 +57,13 @@ erpnext.utils.get_party_details = function (frm, method, args, callback) {
 		args.fetch_payment_terms_template = cint(!frm.doc.ignore_default_payment_terms_template);
 	}
 
-	if (in_list(SALES_DOCTYPES, frm.doc.doctype)) {
+	if (SALES_DOCTYPES.includes(frm.doc.doctype)) {
 		if (!args.company_address && frm.doc.company_address) {
 			args.company_address = frm.doc.company_address;
 		}
 	}
 
-	if (in_list(PURCHASE_DOCTYPES, frm.doc.doctype)) {
+	if (PURCHASE_DOCTYPES.includes(frm.doc.doctype)) {
 		if (!args.company_address && frm.doc.billing_address) {
 			args.company_address = frm.doc.billing_address;
 		}
@@ -157,7 +157,7 @@ erpnext.utils.get_address_display = function (frm, address_field, display_field,
 			args: { address_dict: frm.doc[address_field] },
 			callback: function (r) {
 				if (r.message) {
-					frm.set_value(display_field, frappe.utils.html2text(r.message));
+					frm.set_value(display_field, r.message);
 				}
 			},
 		});
@@ -294,26 +294,48 @@ erpnext.utils.set_taxes = function (frm, triggered_from_field) {
 erpnext.utils.get_contact_details = function (frm) {
 	if (frm.updating_party_details) return;
 
-	if (frm.doc["contact_person"]) {
-		frappe.call({
-			method: "frappe.contacts.doctype.contact.contact.get_contact_details",
-			args: { contact: frm.doc.contact_person },
-			callback: function (r) {
-				if (r.message) frm.set_value(r.message);
-			},
-		});
-	} else {
-		frm.set_value({
-			contact_person: "",
-			contact_display: "",
-			contact_email: "",
-			contact_mobile: "",
-			contact_phone: "",
-			contact_designation: "",
-			contact_department: "",
-		});
+	if (!frm.doc.contact_person) {
+		reset_contact_fields(frm);
+		return;
 	}
+
+	frappe.call({
+		method: "frappe.contacts.doctype.contact.contact.get_contact_details",
+		args: { contact: frm.doc.contact_person },
+		callback: function (r) {
+			if (r.message) frm.set_value(r.message);
+		},
+	});
 };
+
+erpnext.utils.get_employee_contact_details = function (frm) {
+	if (frm.updating_party_details || frm.doc.party_type !== "Employee") return;
+
+	if (!frm.doc.party) {
+		reset_contact_fields(frm);
+		return;
+	}
+
+	frappe.call({
+		method: "erpnext.setup.doctype.employee.employee.get_contact_details",
+		args: { employee: frm.doc.party },
+		callback: function (r) {
+			if (r.message) frm.set_value(r.message);
+		},
+	});
+};
+
+function reset_contact_fields(frm) {
+	frm.set_value({
+		contact_person: "",
+		contact_display: "",
+		contact_email: "",
+		contact_mobile: "",
+		contact_phone: "",
+		contact_designation: "",
+		contact_department: "",
+	});
+}
 
 erpnext.utils.validate_mandatory = function (frm, label, value, trigger_on) {
 	if (!value) {

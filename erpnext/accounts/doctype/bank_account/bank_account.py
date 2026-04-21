@@ -51,25 +51,29 @@ class BankAccount(Document):
 		delete_contact_and_address("Bank Account", self.name)
 
 	def validate(self):
-		self.validate_company()
-		self.validate_account()
+		self.validate_is_company_account()
 		self.update_default_bank_account()
 
-	def validate_account(self):
-		if self.account:
-			if accounts := frappe.db.get_all(
-				"Bank Account", filters={"account": self.account, "name": ["!=", self.name]}, as_list=1
-			):
-				frappe.throw(
-					_("'{0}' account is already used by {1}. Use another account.").format(
-						frappe.bold(self.account),
-						frappe.bold(comma_and([get_link_to_form(self.doctype, x[0]) for x in accounts])),
-					)
-				)
+	def validate_is_company_account(self):
+		if self.is_company_account:
+			if not self.company:
+				frappe.throw(_("Company is mandatory for company account"))
 
-	def validate_company(self):
-		if self.is_company_account and not self.company:
-			frappe.throw(_("Company is mandatory for company account"))
+			if not self.account:
+				frappe.throw(_("Company Account is mandatory"))
+
+			self.validate_account()
+
+	def validate_account(self):
+		if accounts := frappe.db.get_all(
+			"Bank Account", filters={"account": self.account, "name": ["!=", self.name]}, as_list=1
+		):
+			frappe.throw(
+				_("'{0}' account is already used by {1}. Use another account.").format(
+					frappe.bold(self.account),
+					frappe.bold(comma_and([get_link_to_form(self.doctype, x[0]) for x in accounts])),
+				)
+			)
 
 	def update_default_bank_account(self):
 		if self.is_default and not self.disabled:
@@ -111,7 +115,8 @@ def get_default_company_bank_account(company, party_type, party):
 
 
 @frappe.whitelist()
-def get_bank_account_details(bank_account):
+def get_bank_account_details(bank_account: str):
+	frappe.has_permission("Bank Account", doc=bank_account, ptype="read", throw=True)
 	return frappe.get_cached_value(
 		"Bank Account", bank_account, ["account", "bank", "bank_account_no"], as_dict=1
 	)

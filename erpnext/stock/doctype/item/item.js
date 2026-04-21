@@ -84,7 +84,49 @@ frappe.ui.form.on("Item", {
 		}
 	},
 
+	toggle_has_serial_batch_fields(frm) {
+		let hide_fields = cint(frappe.user_defaults?.enable_serial_and_batch_no_for_item) === 0 ? 1 : 0;
+
+		frm.toggle_display(
+			[
+				"serial_no_series",
+				"batch_number_series",
+				"create_new_batch",
+				"has_expiry_date",
+				"retain_sample",
+			],
+			!hide_fields
+		);
+		frm.toggle_enable(["has_serial_no", "has_batch_no"], !hide_fields);
+
+		if (hide_fields) {
+			let header = frm.fields_dict["serial_nos_and_batches"].wrapper;
+			let wrapper = header.find(".section-head.collapsible");
+
+			render_serial_batch_banner(wrapper);
+
+			if (!wrapper.data("banner-handler-added")) {
+				wrapper.data("banner-handler-added", true);
+
+				wrapper.on("click", function () {
+					setTimeout(() => {
+						let isCollapsed = $(this).hasClass("collapsed");
+
+						wrapper.find(".custom-serial-batch-banner").toggleClass("hidden", isCollapsed);
+					}, 10);
+				});
+			}
+
+			// Button action
+			wrapper.find(".go-to-settings").on("click", function () {
+				frappe.set_route("Form", "Stock Settings");
+			});
+		}
+	},
+
 	refresh: function (frm) {
+		frm.trigger("toggle_has_serial_batch_fields");
+
 		if (frm.doc.is_stock_item) {
 			frm.add_custom_button(
 				__("Stock Balance"),
@@ -116,6 +158,11 @@ frappe.ui.form.on("Item", {
 				},
 				__("View")
 			);
+
+			frm.toggle_display(
+				["opening_stock"],
+				frappe.model.can_create("Stock Entry") && frappe.model.can_write("Stock Entry")
+			);
 		}
 
 		if (frm.doc.is_fixed_asset) {
@@ -129,7 +176,7 @@ frappe.ui.form.on("Item", {
 		if (frm.doc.has_variants) {
 			frm.set_intro(
 				__(
-					"This Item is a Template and cannot be used in transactions. Item attributes will be copied over into the variants unless 'No Copy' is set"
+					"This Item is a Template and cannot be used in transactions.<br>All fields present in the 'Copy Fields to Variant' table in Item Variant Settings will be copied to its variant items."
 				),
 				true
 			);
@@ -239,6 +286,8 @@ frappe.ui.form.on("Item", {
 				},
 			};
 		});
+
+		frm.toggle_display(["standard_rate"], frappe.model.can_create("Item Price"));
 	},
 
 	validate: function (frm) {
@@ -346,6 +395,63 @@ var set_customer_group = function (frm, cdt, cdn) {
 	});
 	return true;
 };
+
+function render_serial_batch_banner(wrapper) {
+	let hiddenClass = "";
+	if (wrapper.hasClass("collapsed")) {
+		hiddenClass = "hidden";
+	}
+
+	wrapper.find(".custom-serial-batch-banner").remove();
+
+	let banner_html = `
+		<div class="custom-serial-batch-banner ${hiddenClass}">
+			<div class="banner-content">
+				<span class="banner-icon">${frappe.utils.icon("solid-warning", "lg", "", "padding-bottom:2px")}</span>
+				<span class="banner-text">
+					${__("To use Serial / Batch feature, enable {0} in {1}.", [
+						`<b>${__("Activate Serial / Batch No for Item")}</b>`,
+						`<a class="go-to-settings" style="text-decoration: underline;">${__(
+							"Stock Settings"
+						)}</a>`,
+					])}
+				</span>
+			</div>
+		</div>
+		<style>
+			.custom-serial-batch-banner {
+				background-color: var(--amber-50);
+				border: 1px solid var(--amber-50);
+				border-radius: 8px;
+				padding: 12px 16px;
+				margin-top: 16px;
+			}
+
+			.custom-serial-batch-banner .banner-content {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+			}
+
+			.custom-serial-batch-banner .banner-icon {
+				font-size: 18px;
+			}
+
+			.custom-serial-batch-banner .banner-text {
+				flex: 1;
+				font-size: 14px;
+				color: var(--gray-800);
+			}
+
+			.custom-serial-batch-banner .btn {
+				white-space: nowrap;
+			}
+		</style>
+	`;
+
+	// Insert banner at top of section
+	wrapper.append(banner_html);
+}
 
 $.extend(erpnext.item, {
 	setup_queries: function (frm) {
@@ -1063,7 +1169,7 @@ frappe.tour["Item"] = [
 		fieldname: "valuation_rate",
 		title: "Valuation Rate",
 		description: __(
-			"There are two options to maintain valuation of stock. FIFO (first in - first out) and Moving Average. To understand this topic in detail please visit <a href='https://docs.erpnext.com/docs/v13/user/manual/en/stock/articles/item-valuation-fifo-and-moving-average' target='_blank'>Item Valuation, FIFO and Moving Average.</a>"
+			"There are two options to maintain valuation of stock. FIFO (first in - first out) and Moving Average. To understand this topic in detail please visit <a href='https://docs.frappe.io/erpnext/user/manual/en/calculation-of-valuation-rate-in-fifo-and-moving-average' target='_blank'>Item Valuation, FIFO and Moving Average.</a>"
 		),
 	},
 	{
@@ -1089,9 +1195,9 @@ function open_form(frm, doctype, child_doctype, parentfield) {
 		let new_child_doc = frappe.model.add_child(new_doc, child_doctype, parentfield);
 		new_child_doc.item_code = frm.doc.name;
 		new_child_doc.item_name = frm.doc.item_name;
-		if (in_list(SALES_DOCTYPES, doctype) && frm.doc.sales_uom) {
+		if (SALES_DOCTYPES.includes(doctype) && frm.doc.sales_uom) {
 			new_child_doc.uom = frm.doc.sales_uom;
-		} else if (in_list(PURCHASE_DOCTYPES, doctype) && frm.doc.purchase_uom) {
+		} else if (PURCHASE_DOCTYPES.includes(doctype) && frm.doc.purchase_uom) {
 			new_child_doc.uom = frm.doc.purchase_uom;
 		} else {
 			new_child_doc.uom = frm.doc.stock_uom;

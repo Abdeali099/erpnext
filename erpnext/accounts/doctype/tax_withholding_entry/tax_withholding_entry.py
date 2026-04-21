@@ -197,6 +197,7 @@ class TaxWithholdingEntry(Document):
 
 				new_entry = frappe.copy_doc(old_entry)
 				new_entry.update(values_to_update)
+				new_entry.flags.skip_docstatus_validation = True
 				new_entry.insert()
 
 				docs_needing_reindex.add((old_entry.parenttype, old_entry.parent))
@@ -335,6 +336,7 @@ class TaxWithholdingEntry(Document):
 				"withholding_date": None,
 			}
 			new_entry.update(values_to_update)
+			new_entry.flags.skip_docstatus_validation = True
 			new_entry.insert()
 
 			docs_needing_reindex.add((entry.parenttype, entry.parent))
@@ -344,7 +346,6 @@ class TaxWithholdingEntry(Document):
 
 from erpnext.accounts.doctype.tax_withholding_category.tax_withholding_category import (
 	TaxWithholdingDetails,
-	get_tax_id_for_party,
 )
 
 
@@ -377,30 +378,23 @@ class TaxWithholdingController:
 		return category_names
 
 	def calculate(self):
-		# Always get category details first for account mapping
 		self.category_details = self._get_category_details()
+
+		self._update_taxable_amounts()
 
 		if not self.doc.override_tax_withholding_entries:
 			self._generate_withholding_entries()
 
-		# Final processing - entry status and tax_update
 		self._process_withholding_entries()
 
 	def _generate_withholding_entries(self):
-		# Clear existing entries
 		self.doc.tax_withholding_entries = []
 
-		# Calculate taxable amounts for each category
-		self._update_taxable_amounts()
-
-		# Apply threshold rules
 		self._evaluate_thresholds()
 
-		# Generate entries for each category
 		for category in self.category_details.values():
 			self.entries += self._create_entries_for_category(category)
 
-		# Add all generated entries to the document
 		self.doc.extend("tax_withholding_entries", self.entries)
 
 	def _create_entries_for_category(self, category):
@@ -653,8 +647,11 @@ class TaxWithholdingController:
 
 		# NOTE: This can be a configurable option
 		# To check if filter by tax_id is needed
-		tax_id = get_tax_id_for_party(self.party_type, self.party)
-		query = query.where(entry.tax_id == tax_id) if tax_id else query.where(entry.party == self.party)
+		query = (
+			query.where(entry.tax_id == category.tax_id)
+			if category.tax_id
+			else query.where(entry.party == self.party)
+		)
 
 		return query
 
@@ -693,6 +690,7 @@ class TaxWithholdingController:
 				"company": self.doc.company,
 				"party_type": self.party_type,
 				"party": self.party,
+				"tax_id": category.tax_id,
 				"tax_withholding_category": category.name,
 				"tax_withholding_group": category.tax_withholding_group,
 				"tax_rate": category.tax_rate,
@@ -715,6 +713,10 @@ class TaxWithholdingController:
 		existing_taxes = {row.account_head: row for row in self.doc.taxes if row.is_tax_withholding_account}
 		precision = self.doc.precision("tax_amount", "taxes")
 		conversion_rate = self.get_conversion_rate()
+		add_deduct_tax = "Deduct"
+
+		if self.party_type == "Customer":
+			add_deduct_tax = "Add"
 
 		for account_head, base_amount in account_amount_map.items():
 			tax_amount = flt(base_amount / conversion_rate, precision)
@@ -731,6 +733,7 @@ class TaxWithholdingController:
 				tax_row = self._create_tax_row(account_head, tax_amount)
 				for_update = False
 
+			tax_row.add_deduct_tax = add_deduct_tax
 			# Set item-wise tax breakup for this tax row
 			self._set_item_wise_tax_for_tds(
 				tax_row, account_head, category_withholding_map, for_update=for_update
@@ -750,7 +753,6 @@ class TaxWithholdingController:
 				"account_head": account_head,
 				"description": account_head,
 				"cost_center": cost_center,
-				"add_deduct_tax": "Deduct",
 				"tax_amount": tax_amount,
 				"dont_recompute_tax": 1,
 			},
@@ -814,12 +816,14 @@ class TaxWithholdingController:
 			else:
 				item_tax_amount = 0
 
+			multiplier = -1 if tax_row.add_deduct_tax == "Deduct" else 1
+
 			self.doc._item_wise_tax_details.append(
 				frappe._dict(
 					item=item,
 					tax=tax_row,
 					rate=category.tax_rate,
-					amount=item_tax_amount * -1,  # Negative because it's a deduction
+					amount=item_tax_amount * multiplier,
 					taxable_amount=item_base_taxable,
 				)
 			)
@@ -1053,6 +1057,7 @@ class TaxWithholdingController:
 				"party_type": self.party_type,
 				"party": self.party,
 				"company": self.doc.company,
+				"tax_id": category.tax_id,
 			}
 		)
 		return entry
