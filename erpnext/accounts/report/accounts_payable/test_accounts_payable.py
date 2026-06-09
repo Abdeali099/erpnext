@@ -1,8 +1,11 @@
 import frappe
-from frappe.utils import add_days, today
+from frappe.utils import add_days, flt, today
 
 from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import make_purchase_invoice
 from erpnext.accounts.report.accounts_payable.accounts_payable import execute
+from erpnext.accounts.report.accounts_receivable.accounts_receivable import (
+	make_payment_entries_from_report,
+)
 from erpnext.accounts.test.accounts_mixin import AccountsTestMixin
 from erpnext.tests.utils import ERPNextTestSuite
 
@@ -163,3 +166,228 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 		self.assertEqual(len(report[1]), 1)
 		row = report[1][0]
 		self.assertEqual([pi.name, project.name, 300], [row.voucher_no, row.project, row.outstanding])
+
+	# --- Bulk "Create Payment Entry" from the report ----------------------------------
+
+	def _ap_report_rows(self, party=None):
+		filters = {
+			"company": self.company,
+			"party_type": "Supplier",
+			"report_date": today(),
+			"range": "30, 60, 90, 120",
+		}
+		if party:
+			filters["party"] = [party]
+		return execute(filters)[1]
+
+	def _make_pi(self, supplier, credit_to=None, currency=None, conversion_rate=1, rate=300):
+		frappe.set_user("Administrator")
+		pi = make_purchase_invoice(
+			item=self.item,
+			company=self.company,
+			supplier=supplier,
+			is_return=False,
+			update_stock=False,
+			posting_date=frappe.utils.datetime.date(2021, 5, 1),
+			do_not_save=1,
+			rate=rate,
+			price_list_rate=rate,
+			qty=1,
+		)
+		if currency:
+			pi.currency = currency
+			pi.conversion_rate = conversion_rate
+		if credit_to:
+			pi.credit_to = credit_to
+		return pi.save().submit()
+
+	def test_bulk_pay_single_supplier_multiple_invoices(self):
+		self.create_supplier(supplier_name="_Test AP Bulk Supplier")
+		pi1 = self._make_pi(self.supplier)
+		pi2 = self._make_pi(self.supplier)
+
+		rows = [r for r in self._ap_report_rows(self.supplier) if r.get("voucher_no") in (pi1.name, pi2.name)]
+		names = make_payment_entries_from_report(self.company, rows)
+
+		self.assertEqual(len(names), 1)
+		pe = frappe.get_doc("Payment Entry", names[0])
+		self.assertEqual(pe.docstatus, 0)
+		self.assertEqual(pe.payment_type, "Pay")
+		self.assertEqual(pe.party, self.supplier)
+		self.assertEqual(len(pe.references), 2)
+		self.assertEqual(flt(sum(r.allocated_amount for r in pe.references)), 600)
+
+	def test_bulk_pay_multiple_suppliers(self):
+		self.create_supplier(supplier_name="_Test AP Supplier A")
+		supplier_a = self.supplier
+		pi_a1 = self._make_pi(supplier_a)
+		pi_a2 = self._make_pi(supplier_a)
+
+		self.create_supplier(supplier_name="_Test AP Supplier B")
+		supplier_b = self.supplier
+		pi_b1 = self._make_pi(supplier_b)
+
+		wanted = {pi_a1.name, pi_a2.name, pi_b1.name}
+		rows = [r for r in self._ap_report_rows() if r.get("voucher_no") in wanted]
+		names = make_payment_entries_from_report(self.company, rows)
+
+		self.assertEqual(len(names), 2)
+		by_party = {frappe.db.get_value("Payment Entry", n, "party"): n for n in names}
+		self.assertEqual(set(by_party), {supplier_a, supplier_b})
+		self.assertEqual(len(frappe.get_doc("Payment Entry", by_party[supplier_a]).references), 2)
+		self.assertEqual(len(frappe.get_doc("Payment Entry", by_party[supplier_b]).references), 1)
+
+	def test_bulk_pay_multi_currency_splits_into_separate_entries(self):
+		# self.supplier (USD) + self.creditors_usd created in setUp
+		pi_usd = self._make_pi(
+			self.supplier, credit_to=self.creditors_usd, currency="USD", conversion_rate=80
+		)
+		pi_inr = self._make_pi(self.supplier, credit_to=self.creditors, currency="INR", conversion_rate=1)
+
+		wanted = {pi_usd.name, pi_inr.name}
+		rows = [r for r in self._ap_report_rows(self.supplier) if r.get("voucher_no") in wanted]
+		names = make_payment_entries_from_report(self.company, rows)
+
+		self.assertEqual(len(names), 2)
+		for n in names:
+			pe = frappe.get_doc("Payment Entry", n)
+			self.assertEqual(len(pe.references), 1)
+
+	def test_bulk_pay_filters_invalid_rows(self):
+		invalid_rows = [
+			{"bold": 1, "party": self.supplier, "party_type": "Supplier"},
+			{
+				"voucher_type": "Purchase Invoice",
+				"voucher_no": "PINV-INVALID",
+				"party": self.supplier,
+				"party_type": "Supplier",
+				"outstanding": -50,
+			},
+			{
+				"voucher_type": "Payment Entry",
+				"voucher_no": "PE-INVALID",
+				"party": self.supplier,
+				"party_type": "Supplier",
+				"outstanding": 100,
+			},
+		]
+		self.assertRaises(
+			frappe.ValidationError, make_payment_entries_from_report, self.company, invalid_rows
+		)
+
+	def test_bulk_pay_collapses_payment_term_split_rows(self):
+		payment_term1 = frappe.get_doc(
+			{"doctype": "Payment Term", "payment_term_name": "_Test Bulk 50% on 15 Days"}
+		).insert()
+		payment_term2 = frappe.get_doc(
+			{"doctype": "Payment Term", "payment_term_name": "_Test Bulk 50% on 30 Days"}
+		).insert()
+		template = frappe.get_doc(
+			{
+				"doctype": "Payment Terms Template",
+				"template_name": "_Test Bulk 50-50",
+				"terms": [
+					{
+						"doctype": "Payment Terms Template Detail",
+						"due_date_based_on": "Day(s) after invoice date",
+						"payment_term": payment_term1.name,
+						"description": "_Test Bulk 50-50",
+						"invoice_portion": 50,
+						"credit_days": 15,
+					},
+					{
+						"doctype": "Payment Terms Template Detail",
+						"due_date_based_on": "Day(s) after invoice date",
+						"payment_term": payment_term2.name,
+						"description": "_Test Bulk 50-50",
+						"invoice_portion": 50,
+						"credit_days": 30,
+					},
+				],
+			}
+		).insert()
+
+		self.create_supplier(supplier_name="_Test AP Term Supplier")
+		pi = self._make_pi_with_terms(self.supplier, template.name)
+
+		filters = {
+			"company": self.company,
+			"party_type": "Supplier",
+			"party": [self.supplier],
+			"report_date": today(),
+			"range": "30, 60, 90, 120",
+			"based_on_payment_terms": 1,
+			"ageing_based_on": "Posting Date",
+		}
+		rows = [r for r in execute(filters)[1] if r.get("voucher_no") == pi.name]
+		self.assertEqual(len(rows), 2)  # report split by payment term
+
+		names = make_payment_entries_from_report(self.company, rows)
+		self.assertEqual(len(names), 1)
+		pe = frappe.get_doc("Payment Entry", names[0])
+		self.assertEqual(len(pe.references), 1)
+		self.assertEqual(flt(pe.references[0].allocated_amount), 300)
+
+	def _make_pi_with_terms(self, supplier, template_name):
+		from erpnext.controllers.accounts_controller import get_payment_terms
+
+		frappe.set_user("Administrator")
+		pi = make_purchase_invoice(
+			item=self.item,
+			company=self.company,
+			supplier=supplier,
+			is_return=False,
+			update_stock=False,
+			posting_date=frappe.utils.datetime.date(2021, 5, 1),
+			do_not_save=1,
+			rate=300,
+			price_list_rate=300,
+			qty=1,
+		)
+		pi.payment_terms_template = template_name
+		pi.set("payment_schedule", [])
+		for row in get_payment_terms(template_name):
+			row["due_date"] = add_days(pi.posting_date, row.get("credit_days", 0))
+			pi.append("payment_schedule", row)
+		return pi.save().submit()
+
+	def test_bulk_pay_honours_allocation_override(self):
+		self.create_supplier(supplier_name="_Test AP Alloc Supplier")
+		pi = self._make_pi(self.supplier)
+
+		rows = [r for r in self._ap_report_rows(self.supplier) if r.get("voucher_no") == pi.name]
+		rows[0]["allocated_amount"] = 100  # pay only part of the 300 outstanding
+
+		names = make_payment_entries_from_report(self.company, rows)
+		self.assertEqual(len(names), 1)
+		pe = frappe.get_doc("Payment Entry", names[0])
+		self.assertEqual(flt(pe.references[0].allocated_amount), 100)
+
+	def test_bulk_pay_receivable_path(self):
+		from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
+		from erpnext.accounts.report.accounts_receivable.accounts_receivable import execute as ar_execute
+
+		si = create_sales_invoice(
+			company=self.company,
+			customer=self.customer,
+			debit_to=self.debit_to,
+			item=self.item,
+			cost_center=self.cost_center,
+			income_account=self.income_account,
+			rate=100,
+		)
+
+		filters = {
+			"company": self.company,
+			"party_type": "Customer",
+			"party": [self.customer],
+			"report_date": today(),
+			"range": "30, 60, 90, 120",
+		}
+		rows = [r for r in ar_execute(filters)[1] if r.get("voucher_no") == si.name]
+		names = make_payment_entries_from_report(self.company, rows)
+
+		self.assertEqual(len(names), 1)
+		pe = frappe.get_doc("Payment Entry", names[0])
+		self.assertEqual(pe.payment_type, "Receive")
+		self.assertEqual(pe.party, self.customer)

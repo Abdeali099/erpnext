@@ -165,6 +165,10 @@ frappe.query_reports["Accounts Payable"] = {
 	collapsible_filters: true,
 	separate_check_filters: true,
 
+	get_datatable_options(options) {
+		return Object.assign(options, { checkboxColumn: true });
+	},
+
 	formatter: function (value, row, column, data, default_formatter) {
 		value = default_formatter(value, row, column, data);
 		if (data && data.bold) {
@@ -178,6 +182,12 @@ frappe.query_reports["Accounts Payable"] = {
 			var filters = report.get_values();
 			frappe.set_route("query-report", "Accounts Payable Summary", { company: filters.company });
 		});
+
+		if (frappe.model.can_create("Payment Entry")) {
+			report.page.add_inner_button(__("Create Payment Entry"), function () {
+				erpnext.utils.create_payment_entries_from_report(report);
+			});
+		}
 
 		if (frappe.boot.sysdefaults.default_ageing_range) {
 			report.set_filter_value("range", frappe.boot.sysdefaults.default_ageing_range);

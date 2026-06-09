@@ -2,6 +2,7 @@
 # License: GNU General Public License v3. See license.txt
 
 
+import json
 from collections import OrderedDict
 
 import frappe
@@ -1310,6 +1311,188 @@ class ReceivablePayableReport:
 			.run()
 		)
 		self.err_journals = [x[0] for x in results] if results else []
+
+
+# Voucher types that can be paid directly from the Receivable / Payable report.
+# Only Invoices can seed a Payment Entry; Journal Entries are supported as reference rows only.
+PAYABLE_VOUCHER_TYPES = ("Sales Invoice", "Purchase Invoice", "Journal Entry")
+INVOICE_VOUCHER_TYPES = ("Sales Invoice", "Purchase Invoice")
+
+
+@frappe.whitelist()
+def make_payment_entries_from_report(company: str, rows: list | str):
+	"""Create draft Payment Entries from selected Accounts Receivable/Payable report rows.
+
+	Rows are grouped by (party_type, party, party_account, account_currency) so each draft
+	Payment Entry has a single party and a consistent account/currency. The actual Payment
+	Entry building is delegated to ``get_payment_entry`` / ``get_reference_details`` so all
+	currency, account and discount logic is inherited. Returns the list of created PE names.
+	"""
+	frappe.has_permission("Payment Entry", "create", throw=True)
+
+	if isinstance(rows, str):
+		rows = json.loads(rows)
+
+	valid_rows = _filter_payable_rows(rows)
+	if not valid_rows:
+		frappe.throw(_("No valid invoice rows selected to create Payment Entries."))
+
+	payment_entries = []
+	for group in _group_report_rows(valid_rows).values():
+		pe = _build_payment_entry_for_group(company, group)
+		if pe:
+			pe.insert()
+			payment_entries.append(pe.name)
+
+	return payment_entries
+
+
+def _filter_payable_rows(rows):
+	"""Keep only real, positive-outstanding invoice/JE rows; drop subtotal/credit-note/advance rows."""
+	valid = []
+	for row in rows:
+		row = frappe._dict(row)
+		if row.get("bold"):
+			# subtotal / total rows
+			continue
+		if not (
+			row.get("voucher_no") and row.get("voucher_type") and row.get("party_type") and row.get("party")
+		):
+			continue
+		if row.voucher_type not in PAYABLE_VOUCHER_TYPES:
+			continue
+		if flt(row.get("outstanding")) <= 0:
+			# credit/debit notes, standalone payments and advances
+			continue
+		valid.append(row)
+	return valid
+
+
+def _group_report_rows(rows):
+	groups = OrderedDict()
+	for row in rows:
+		key = (row.party_type, row.party, row.get("party_account"), row.get("account_currency"))
+		groups.setdefault(key, []).append(row)
+	return groups
+
+
+def _dedupe_rows_by_voucher(rows):
+	# Collapse payment-term split rows (same voucher repeated) to one reference per voucher.
+	seen = OrderedDict()
+	for row in rows:
+		seen.setdefault((row.voucher_type, row.voucher_no), row)
+	return list(seen.values())
+
+
+def _build_payment_entry_for_group(company, group):
+	from erpnext.accounts.doctype.payment_entry.payment_entry import (
+		get_payment_entry,
+		get_reference_details,
+	)
+
+	rows = _dedupe_rows_by_voucher(group)
+	if not rows:
+		return None
+
+	# requested allocation per voucher (from the dialog), if any
+	requested = {(r.voucher_type, r.voucher_no): r.get("allocated_amount") for r in rows}
+
+	# Seed from the first Invoice so party/account/bank/currency/exchange-rate get resolved.
+	# A Journal-Entry-only group is built from scratch (get_payment_entry cannot seed from a JE).
+	seed_invoice = next((r for r in rows if r.voucher_type in INVOICE_VOUCHER_TYPES), None)
+	if seed_invoice:
+		pe = get_payment_entry(
+			seed_invoice.voucher_type, seed_invoice.voucher_no, party_type=seed_invoice.party_type
+		)
+	else:
+		pe = _new_payment_entry_for_journal_group(company, rows[0])
+
+	# The party account currency is on the party side (paid_to for Pay, paid_from for Receive).
+	party_account_currency = (
+		pe.paid_to_account_currency if pe.payment_type == "Pay" else pe.paid_from_account_currency
+	)
+
+	# Rebuild references uniformly: one row per selected voucher.
+	pe.set("references", [])
+	for r in rows:
+		details = get_reference_details(
+			r.voucher_type, r.voucher_no, party_account_currency, party_type=r.party_type, party=r.party
+		)
+		outstanding = flt(details.outstanding_amount)
+		if outstanding <= 0:
+			continue
+
+		requested_amount = flt(requested.get((r.voucher_type, r.voucher_no)) or 0)
+		allocated = min(requested_amount, outstanding) if requested_amount > 0 else outstanding
+
+		pe.append(
+			"references",
+			{
+				"reference_doctype": r.voucher_type,
+				"reference_name": r.voucher_no,
+				"account": details.get("account") or r.get("party_account"),
+				"bill_no": details.get("bill_no"),
+				"due_date": details.get("due_date"),
+				"total_amount": details.total_amount,
+				"outstanding_amount": outstanding,
+				"exchange_rate": details.exchange_rate,
+				"allocated_amount": allocated,
+			},
+		)
+
+	if not pe.references:
+		return None
+
+	# Default the paid/received amount to cover all allocations; validate() recomputes base
+	# amounts and exchange rates on insert, and difference is only enforced on submit.
+	total_allocated = sum(flt(ref.allocated_amount) for ref in pe.references)
+	pe.paid_amount = total_allocated
+	pe.received_amount = total_allocated
+
+	# Bank-type accounts require a reference no/date even to save a draft. Set sensible
+	# placeholders the user can edit on the draft before submitting.
+	pe.reference_date = pe.reference_date or pe.posting_date or nowdate()
+	if not pe.reference_no:
+		pe.reference_no = _("Generated from Accounts Report")
+
+	return pe
+
+
+def _new_payment_entry_for_journal_group(company, row):
+	from erpnext.accounts.doctype.payment_entry.payment_entry import get_bank_cash_account
+	from erpnext.accounts.party import get_party_account, get_party_account_currency
+
+	account_type = frappe.db.get_value("Party Type", row.party_type, "account_type")
+	payment_type = "Pay" if account_type == "Payable" else "Receive"
+
+	party_account = row.get("party_account") or get_party_account(row.party_type, row.party, company)
+	party_account_currency = row.get("account_currency") or get_party_account_currency(
+		row.party_type, row.party, company
+	)
+
+	bank = get_bank_cash_account(frappe._dict(company=company, mode_of_payment=None), None)
+
+	pe = frappe.new_doc("Payment Entry")
+	pe.payment_type = payment_type
+	pe.company = company
+	pe.posting_date = nowdate()
+	pe.party_type = row.party_type
+	pe.party = row.party
+
+	if payment_type == "Pay":
+		pe.paid_to = party_account
+		pe.paid_to_account_currency = party_account_currency
+		pe.paid_from = bank.get("account")
+		pe.paid_from_account_currency = bank.get("account_currency")
+	else:
+		pe.paid_from = party_account
+		pe.paid_from_account_currency = party_account_currency
+		pe.paid_to = bank.get("account")
+		pe.paid_to_account_currency = bank.get("account_currency")
+
+	pe.setup_party_account_field()
+	pe.set_missing_values()
+	return pe
 
 
 def get_party_group_with_children(party, party_groups):

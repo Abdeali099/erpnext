@@ -335,6 +335,146 @@ $.extend(erpnext.utils, {
 		});
 	},
 
+	create_payment_entries_from_report: function (report) {
+		// Shared by the Accounts Payable / Receivable reports: let the user tick invoice rows
+		// and create draft Payment Entries (one per party) without leaving the report.
+		const allowed_voucher_types = ["Sales Invoice", "Purchase Invoice", "Journal Entry"];
+
+		const checked = (report.datatable.rowmanager.getCheckedRows() || [])
+			.map((i) => report.data[i])
+			.filter(Boolean);
+
+		const rows = checked.filter(
+			(r) =>
+				r &&
+				!r.bold &&
+				r.voucher_no &&
+				allowed_voucher_types.includes(r.voucher_type) &&
+				flt(r.outstanding) > 0
+		);
+
+		if (!rows.length) {
+			frappe.msgprint({
+				title: __("No Payable Rows Selected"),
+				message: __(
+					"Select one or more outstanding Invoice or Journal Entry rows (with positive outstanding) to create Payment Entries."
+				),
+				indicator: "orange",
+			});
+			return;
+		}
+
+		const company = report.get_filter_value("company");
+
+		const reference_rows = rows.map((r) => ({
+			party: r.party,
+			party_type: r.party_type,
+			party_account: r.party_account,
+			account_currency: r.account_currency,
+			voucher_type: r.voucher_type,
+			voucher_no: r.voucher_no,
+			bill_no: r.bill_no,
+			currency: r.currency,
+			outstanding: flt(r.outstanding),
+			allocated_amount: flt(r.outstanding),
+		}));
+
+		const dialog = new frappe.ui.Dialog({
+			title: __("Create Payment Entry"),
+			size: "extra-large",
+			fields: [
+				{
+					fieldname: "references",
+					fieldtype: "Table",
+					label: __("Invoices"),
+					cannot_add_rows: true,
+					in_place_edit: false,
+					data: reference_rows,
+					get_data: () => reference_rows,
+					fields: [
+						{
+							fieldname: "party",
+							label: __("Party"),
+							fieldtype: "Data",
+							in_list_view: 1,
+							read_only: 1,
+							columns: 2,
+						},
+						{
+							fieldname: "voucher_type",
+							label: __("Type"),
+							fieldtype: "Data",
+							read_only: 1,
+						},
+						{
+							fieldname: "voucher_no",
+							label: __("Reference"),
+							fieldtype: "Data",
+							in_list_view: 1,
+							read_only: 1,
+							columns: 3,
+						},
+						{
+							fieldname: "bill_no",
+							label: __("Supplier Invoice No"),
+							fieldtype: "Data",
+							read_only: 1,
+						},
+						{
+							fieldname: "outstanding",
+							label: __("Outstanding"),
+							fieldtype: "Currency",
+							in_list_view: 1,
+							read_only: 1,
+							columns: 2,
+						},
+						{
+							fieldname: "allocated_amount",
+							label: __("Allocated"),
+							fieldtype: "Currency",
+							in_list_view: 1,
+							columns: 2,
+						},
+					],
+				},
+			],
+			primary_action_label: __("Create"),
+			primary_action: (values) => {
+				frappe.call({
+					method: "erpnext.accounts.report.accounts_receivable.accounts_receivable.make_payment_entries_from_report",
+					args: {
+						company: company,
+						rows: values.references,
+					},
+					freeze: true,
+					freeze_message: __("Creating Payment Entries..."),
+					callback: (r) => {
+						const names = r.message || [];
+						if (!names.length) return;
+
+						dialog.hide();
+						report.datatable.rowmanager.checkAll(false);
+
+						if (names.length === 1) {
+							frappe.set_route("Form", "Payment Entry", names[0]);
+						} else {
+							const links = names
+								.map((n) => frappe.utils.get_form_link("Payment Entry", n, true))
+								.join("<br>");
+							frappe.msgprint({
+								title: __("{0} Draft Payment Entries Created", [names.length]),
+								message: links,
+								indicator: "green",
+							});
+						}
+					},
+				});
+			},
+		});
+
+		dialog.show();
+	},
+
 	add_inventory_dimensions: function (report_name, index) {
 		let filters = frappe.query_reports[report_name].filters;
 
