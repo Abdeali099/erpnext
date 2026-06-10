@@ -1347,8 +1347,12 @@ def make_payment_entries_from_report(company: str, rows: list | str):
 	return payment_entries
 
 
-def _filter_payable_rows(rows):
-	"""Keep only real, positive-outstanding invoice/JE rows; drop subtotal/credit-note/advance rows."""
+def _filter_payable_rows(rows: list[dict]) -> list[frappe._dict]:
+	"""Keep only real, positive-outstanding invoice/JE rows.
+
+	Drops subtotal/total rows, credit/debit notes, standalone payments and advances, and any
+	voucher type we cannot pay (only Sales/Purchase Invoice and Journal Entry are allowed).
+	"""
 	valid = []
 	for row in rows:
 		row = frappe._dict(row)
@@ -1368,7 +1372,8 @@ def _filter_payable_rows(rows):
 	return valid
 
 
-def _group_report_rows(rows):
+def _group_report_rows(rows: list[frappe._dict]) -> "OrderedDict[tuple, list[frappe._dict]]":
+	"""Group rows so each group becomes one Payment Entry (single party + consistent account)."""
 	groups = OrderedDict()
 	for row in rows:
 		key = (row.party_type, row.party, row.get("party_account"), row.get("account_currency"))
@@ -1376,15 +1381,22 @@ def _group_report_rows(rows):
 	return groups
 
 
-def _dedupe_rows_by_voucher(rows):
-	# Collapse payment-term split rows (same voucher repeated) to one reference per voucher.
+def _dedupe_rows_by_voucher(rows: list[frappe._dict]) -> list[frappe._dict]:
+	"""Collapse payment-term split rows (same voucher repeated) to one row per voucher."""
 	seen = OrderedDict()
 	for row in rows:
 		seen.setdefault((row.voucher_type, row.voucher_no), row)
 	return list(seen.values())
 
 
-def _build_payment_entry_for_group(company, group):
+def _build_payment_entry_for_group(company: str, group: list[frappe._dict]):
+	"""Build one unsaved draft Payment Entry for a group of selected rows.
+
+	An Invoice in the group seeds the Payment Entry via ``get_payment_entry`` (which resolves
+	party/accounts/currency/exchange-rate). A Journal-Entry-only group is built from scratch
+	because ``get_payment_entry`` cannot seed from a Journal Entry. Every selected voucher is
+	then added as a reference row. Returns the Payment Entry, or ``None`` if nothing to pay.
+	"""
 	from erpnext.accounts.doctype.payment_entry.payment_entry import (
 		get_payment_entry,
 		get_reference_details,
@@ -1458,7 +1470,13 @@ def _build_payment_entry_for_group(company, group):
 	return pe
 
 
-def _new_payment_entry_for_journal_group(company, row):
+def _new_payment_entry_for_journal_group(company: str, row: frappe._dict):
+	"""Build a bare Payment Entry for a group with no Invoice to seed from (Journal Entries only).
+
+	``get_payment_entry`` only knows how to seed from Invoices, so here we set the party, the
+	party account (from the row) and a default bank/cash account by hand. References are added
+	by the caller.
+	"""
 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_bank_cash_account
 	from erpnext.accounts.party import get_party_account, get_party_account_currency
 
@@ -1479,19 +1497,17 @@ def _new_payment_entry_for_journal_group(company, row):
 	pe.party_type = row.party_type
 	pe.party = row.party
 
-	if payment_type == "Pay":
-		pe.paid_to = party_account
-		pe.paid_to_account_currency = party_account_currency
-		pe.paid_from = bank.get("account")
-		pe.paid_from_account_currency = bank.get("account_currency")
-	else:
-		pe.paid_from = party_account
-		pe.paid_from_account_currency = party_account_currency
-		pe.paid_to = bank.get("account")
-		pe.paid_to_account_currency = bank.get("account_currency")
+	# For "Pay" the party account is paid_to and the bank is paid_from; "Receive" is the reverse.
+	party_field = "paid_to" if payment_type == "Pay" else "paid_from"
+	bank_field = "paid_from" if payment_type == "Pay" else "paid_to"
 
-	pe.setup_party_account_field()
-	pe.set_missing_values()
+	pe.set(party_field, party_account)
+	pe.set(f"{party_field}_account_currency", party_account_currency)
+	pe.set(bank_field, bank.get("account"))
+	pe.set(f"{bank_field}_account_currency", bank.get("account_currency"))
+
+	# Remaining fields (party_name, account types, ref details, amounts) are filled by
+	# Payment Entry.validate() on insert; we only set what the caller reads before save.
 	return pe
 
 
