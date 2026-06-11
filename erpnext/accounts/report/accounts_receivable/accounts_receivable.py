@@ -9,7 +9,7 @@ import frappe
 from frappe import _, qb, query_builder, scrub
 from frappe.query_builder import Criterion
 from frappe.query_builder.functions import Date, Substring, Sum
-from frappe.utils import cint, cstr, flt, getdate, nowdate
+from frappe.utils import cint, cstr, flt, get_filtered_list_link, getdate, nowdate
 
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
 	get_accounting_dimensions,
@@ -1343,6 +1343,21 @@ def make_payment_entries_from_report(company: str, rows: list | str):
 		if pe:
 			pe.insert()
 			payment_entries.append(pe.name)
+
+	if payment_entries:
+		frappe.msgprint(
+			_("Created {0} draft Payment Entry(s): {1}").format(
+				len(payment_entries), get_filtered_list_link("Payment Entry", payment_entries)
+			),
+			title=_("Payment Entries Created"),
+			indicator="green",
+		)
+	else:
+		frappe.msgprint(
+			_("No Payment Entries were created. The selected invoices may have no outstanding amount."),
+			title=_("Nothing to Pay"),
+			indicator="orange",
+		)
 
 	return payment_entries
 
