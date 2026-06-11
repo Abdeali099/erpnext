@@ -338,6 +338,13 @@ $.extend(erpnext.utils, {
 	create_payment_entries_from_report: function (report) {
 		const allowed_voucher_types = ["Sales Invoice", "Purchase Invoice", "Journal Entry"];
 
+		if (!report.datatable) {
+			frappe.throw({
+				title: __("No Data"),
+				message: __("There are no data to create Payment Entries."),
+			});
+		}
+
 		const checked = (report.datatable.rowmanager.getCheckedRows() || [])
 			.map((i) => report.data[i])
 			.filter(Boolean);
@@ -353,10 +360,8 @@ $.extend(erpnext.utils, {
 
 		if (!rows.length) {
 			frappe.throw({
-				title: __("No Payable Rows Selected"),
-				message: __(
-					"Select one or more Outstanding Invoice or Journal Entry rows (with positive outstanding) to create Payment Entries."
-				),
+				title: __("Invalid Selection"),
+				message: __("Please select valid outstanding Invoice or Journal Entry rows."),
 			});
 		}
 
