@@ -1320,7 +1320,7 @@ INVOICE_VOUCHER_TYPES = ("Sales Invoice", "Purchase Invoice")
 
 
 @frappe.whitelist()
-def make_payment_entries_from_report(company: str, rows: list | str):
+def make_payment_entries_from_report(company: str, references: list | str):
 	"""Create draft Payment Entries from selected Accounts Receivable/Payable report rows.
 
 	Rows are grouped by (party_type, party, party_account, account_currency) so each draft
@@ -1330,10 +1330,10 @@ def make_payment_entries_from_report(company: str, rows: list | str):
 	"""
 	frappe.has_permission("Payment Entry", "create", throw=True)
 
-	if isinstance(rows, str):
-		rows = json.loads(rows)
+	if isinstance(references, str):
+		references = json.loads(references)
 
-	valid_rows = _filter_payable_rows(rows)
+	valid_rows = _filter_payable_rows(references)
 	if not valid_rows:
 		frappe.throw(_("No valid invoice rows selected to create Payment Entries."))
 

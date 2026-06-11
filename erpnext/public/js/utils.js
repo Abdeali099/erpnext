@@ -355,7 +355,7 @@ $.extend(erpnext.utils, {
 			frappe.throw({
 				title: __("No Payable Rows Selected"),
 				message: __(
-					"Select one or more outstanding Invoice or Journal Entry rows (with positive outstanding) to create Payment Entries."
+					"Select one or more Outstanding Invoice or Journal Entry rows (with positive outstanding) to create Payment Entries."
 				),
 			});
 		}
@@ -448,7 +448,7 @@ $.extend(erpnext.utils, {
 					method: "erpnext.accounts.report.accounts_receivable.accounts_receivable.make_payment_entries_from_report",
 					args: {
 						company: company,
-						rows: values.references,
+						references: values.references,
 					},
 					freeze: true,
 					freeze_message: __("Creating Payment Entries..."),
@@ -1233,6 +1233,7 @@ erpnext.utils.map_current_doc = function (opts) {
 			add_filters_group: 1,
 			allow_child_item_selection: opts.allow_child_item_selection,
 			child_fieldname: opts.child_fieldname,
+			child_columns: opts.child_columns,
 			size: opts.size,
 			action: function (selections, args) {
 				let values = selections;
