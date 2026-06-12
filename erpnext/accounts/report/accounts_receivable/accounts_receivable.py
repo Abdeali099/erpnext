@@ -1329,11 +1329,9 @@ def make_payment_entries(filters: dict | str, references: list[dict] | str) -> l
 	- `party_type` / `party`: e.g. "Customer" / "Acme Corp"
 	- `party_account` / `account_currency`: used to group rows into one PE per account
 	- `outstanding`: must be positive; rows with zero/negative are skipped
-	- `allocated_amount` (optional): cap the payment; defaults to full outstanding
 
-	Rows are grouped by (party_type, party, party_account, account_currency).
-
-	One draft Payment Entry is inserted per group.
+	Rows are grouped by (party_type, party, party_account, account_currency); one draft Payment
+	Entry is inserted per group, paying the full outstanding of each selected voucher.
 
 	Returns the list of created PE names.
 	"""
@@ -1411,86 +1409,168 @@ def _group_report_references(references: list):
 	return groups
 
 
-def _dedupe_rows_by_voucher(rows: list):
-	"""Collapse payment-term split rows (same voucher repeated) to one row per voucher."""
+def _unique_vouchers(rows: list, voucher_types: tuple):
+	"""Unique (voucher_type, voucher_no) rows of the given types — first occurrence wins.
+
+	Payment-term split rows (same voucher repeated) collapse here; `get_payment_entry` re-splits
+	the invoice into its payment terms automatically while building the Payment Entry.
+	"""
 	seen = OrderedDict()
 	for row in rows:
-		seen.setdefault((row.voucher_type, row.voucher_no), row)
+		if row.voucher_type in voucher_types:
+			seen.setdefault((row.voucher_type, row.voucher_no), row)
 	return list(seen.values())
 
 
 def _build_payment_entry_for_group(company: str, group: list):
+	"""Build one draft Payment Entry for a group (same party, account and currency).
+
+	`get_payment_entry` turns a single invoice into a complete Payment Entry — resolving
+	party/accounts/currency/exchange-rate AND splitting payment terms (with the real term names).
+	We keep only the references for the terms the user actually selected, seed the PE from the
+	first invoice and merge the rest. Journal Entries cannot seed a Payment Entry, so they are
+	added only as reference rows. The full outstanding of each selected term/voucher is paid.
+	"""
 	from erpnext.accounts.doctype.payment_entry.payment_entry import (
 		get_payment_entry,
 		get_reference_details,
 	)
 
-	rows = _dedupe_rows_by_voucher(group)
-	if not rows:
-		return None
+	invoices = _unique_vouchers(group, INVOICE_VOUCHER_TYPES)
+	journals = _unique_vouchers(group, ("Journal Entry",))
+	party_type = group[0].party_type
 
-	# requested allocation per voucher (from the dialog), if any
-	requested = {(r.voucher_type, r.voucher_no): r.get("allocated_amount") for r in rows}
+	pe = None
+	for invoice in invoices:
+		src = get_payment_entry(invoice.voucher_type, invoice.voucher_no, party_type=party_type)
+		selected = _selected_terms_for_invoice(group, invoice)  # {term name or None: requested amount}
+		whole_invoice = None in selected
+		single_ref = len(src.references) == 1
 
-	# Seed from the first Invoice so party/account/bank/currency/exchange-rate get resolved.
-	# A Journal-Entry-only group is built from scratch (get_payment_entry cannot seed from a JE).
-	seed_invoice = next((r for r in rows if r.voucher_type in INVOICE_VOUCHER_TYPES), None)
-	if seed_invoice:
-		pe = get_payment_entry(
-			seed_invoice.voucher_type, seed_invoice.voucher_no, party_type=seed_invoice.party_type
+		kept = []
+		for ref in src.references:
+			if not (whole_invoice or ref.payment_term in selected):
+				continue
+			row = _copy_reference(ref)
+			# a per-term amount maps to its term; a whole-invoice amount only applies to a lone reference
+			requested = selected.get(ref.payment_term) if ref.payment_term else (selected.get(None) if single_ref else 0)
+			row["allocated_amount"] = _capped_allocation(requested, ref.payment_term_outstanding or ref.outstanding_amount)
+			kept.append(row)
+
+		if pe is None:
+			pe = src
+			pe.set("references", [])
+		for ref in kept:
+			pe.append("references", ref)
+
+	if pe is None:
+		pe = _new_payment_entry_for_journal_group(company, group[0])
+
+	if journals:
+		# party account is paid_to for Pay, paid_from for Receive
+		party_account_currency = (
+			pe.paid_to_account_currency if pe.payment_type == "Pay" else pe.paid_from_account_currency
 		)
-	else:
-		pe = _new_payment_entry_for_journal_group(company, rows[0])
-
-	# The party account currency is on the party side (paid_to for Pay, paid_from for Receive).
-	party_account_currency = (
-		pe.paid_to_account_currency if pe.payment_type == "Pay" else pe.paid_from_account_currency
-	)
-
-	# Rebuild references uniformly: one row per selected voucher.
-	pe.set("references", [])
-	for r in rows:
-		details = get_reference_details(
-			r.voucher_type, r.voucher_no, party_account_currency, party_type=r.party_type, party=r.party
-		)
-		outstanding = flt(details.outstanding_amount)
-		if outstanding <= 0:
-			continue
-
-		requested_amount = flt(requested.get((r.voucher_type, r.voucher_no)) or 0)
-		allocated = min(requested_amount, outstanding) if requested_amount > 0 else outstanding
-
-		pe.append(
-			"references",
-			{
-				"reference_doctype": r.voucher_type,
-				"reference_name": r.voucher_no,
-				"account": details.get("account") or r.get("party_account"),
-				"bill_no": details.get("bill_no"),
-				"due_date": details.get("due_date"),
-				"total_amount": details.total_amount,
-				"outstanding_amount": outstanding,
-				"exchange_rate": details.exchange_rate,
-				"allocated_amount": allocated,
-			},
-		)
+		for je in journals:
+			details = get_reference_details(
+				je.voucher_type, je.voucher_no, party_account_currency, party_type=party_type, party=je.party
+			)
+			outstanding = flt(details.outstanding_amount)
+			if outstanding > 0:
+				pe.append(
+					"references",
+					{
+						"reference_doctype": je.voucher_type,
+						"reference_name": je.voucher_no,
+						"account": je.get("party_account"),
+						"due_date": details.get("due_date"),
+						"total_amount": details.total_amount,
+						"outstanding_amount": outstanding,
+						"exchange_rate": details.exchange_rate,
+						"allocated_amount": _capped_allocation(je.get("allocated_amount"), outstanding),
+					},
+				)
 
 	if not pe.references:
 		return None
 
-	# Default the paid/received amount to cover all allocations; validate() recomputes base
-	# amounts and exchange rates on insert, and difference is only enforced on submit.
 	total_allocated = sum(flt(ref.allocated_amount) for ref in pe.references)
 	pe.paid_amount = total_allocated
 	pe.received_amount = total_allocated
 
-	# Bank-type accounts require a reference no/date even to save a draft. Set sensible
-	# placeholders the user can edit on the draft before submitting.
+	# Bank-type accounts require a reference no/date even to save a draft.
 	pe.reference_date = pe.reference_date or pe.posting_date or nowdate()
 	if not pe.reference_no:
 		pe.reference_no = _("Generated from Accounts Report")
 
 	return pe
+
+
+def _copy_reference(ref) -> dict:
+	"""Copy the payable fields of a Payment Entry Reference (drops child-row metadata)."""
+	fields = (
+		"reference_doctype",
+		"reference_name",
+		"payment_term",
+		"due_date",
+		"bill_no",
+		"account",
+		"total_amount",
+		"outstanding_amount",
+		"payment_term_outstanding",
+		"exchange_rate",
+		"allocated_amount",
+	)
+	return {field: ref.get(field) for field in fields}
+
+
+def _selected_terms_for_invoice(group: list, invoice):
+	"""Map {real Payment Term name: requested allocated amount} for the selected term rows.
+
+	A `None` key (whole invoice — a selected row with no term, e.g. the "Based On Payment Terms"
+	filter is off) means keep all terms. Falls back to `{None: 0}` so an unresolved term keeps the
+	whole invoice rather than dropping it.
+	"""
+	rows = [
+		r
+		for r in group
+		if (r.voucher_type, r.voucher_no) == (invoice.voucher_type, invoice.voucher_no)
+	]
+	if any(not r.get("payment_term") for r in rows):
+		return {None: flt(rows[0].get("allocated_amount"))}
+
+	schedule = frappe.get_all(
+		"Payment Schedule",
+		filters={"parent": invoice.voucher_no, "parenttype": invoice.voucher_type},
+		fields=["payment_term", "description", "due_date"],
+	)
+	selected = {
+		name: flt(r.get("allocated_amount"))
+		for r in rows
+		if (name := _resolve_payment_term_name(r, schedule))
+	}
+	return selected or {None: 0.0}
+
+
+def _capped_allocation(requested, outstanding) -> float:
+	"""Use the requested amount capped at the reference's outstanding; default to full outstanding."""
+	requested = flt(requested)
+	outstanding = flt(outstanding)
+	return min(requested, outstanding) if requested > 0 else outstanding
+
+
+def _resolve_payment_term_name(row, schedule: list):
+	"""Map a report term-split row to the invoice's real Payment Term name.
+
+	The report column shows `description or payment_term`, so match either field; `due_date`
+	breaks ties when terms share a description.
+	"""
+	value = row.get("payment_term")
+	candidates = [s for s in schedule if value in (s.get("payment_term"), s.get("description"))]
+	if len(candidates) > 1 and row.get("due_date"):
+		exact = [s for s in candidates if str(s.get("due_date")) == str(row.get("due_date"))]
+		candidates = exact or candidates
+	return candidates[0].get("payment_term") if candidates else None
 
 
 def _new_payment_entry_for_journal_group(company: str, row: frappe._dict):

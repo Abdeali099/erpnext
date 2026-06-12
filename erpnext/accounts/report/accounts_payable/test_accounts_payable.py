@@ -275,22 +275,25 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 			frappe.ValidationError, make_payment_entries, self.company, invalid_rows
 		)
 
-	def test_bulk_pay_collapses_payment_term_split_rows(self):
-		payment_term1 = frappe.get_doc(
+	def _make_term_template(self):
+		# Two real Payment Terms sharing the SAME description (so the report's payment_term column
+		# shows identical text for both rows -> exercises the due_date-based term resolution).
+		self.payment_term1 = frappe.get_doc(
 			{"doctype": "Payment Term", "payment_term_name": "_Test Bulk 50% on 15 Days"}
 		).insert()
-		payment_term2 = frappe.get_doc(
+		self.payment_term2 = frappe.get_doc(
 			{"doctype": "Payment Term", "payment_term_name": "_Test Bulk 50% on 30 Days"}
 		).insert()
-		template = frappe.get_doc(
+		return frappe.get_doc(
 			{
 				"doctype": "Payment Terms Template",
 				"template_name": "_Test Bulk 50-50",
+				"allocate_payment_based_on_payment_terms": 1,
 				"terms": [
 					{
 						"doctype": "Payment Terms Template Detail",
 						"due_date_based_on": "Day(s) after invoice date",
-						"payment_term": payment_term1.name,
+						"payment_term": self.payment_term1.name,
 						"description": "_Test Bulk 50-50",
 						"invoice_portion": 50,
 						"credit_days": 15,
@@ -298,7 +301,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 					{
 						"doctype": "Payment Terms Template Detail",
 						"due_date_based_on": "Day(s) after invoice date",
-						"payment_term": payment_term2.name,
+						"payment_term": self.payment_term2.name,
 						"description": "_Test Bulk 50-50",
 						"invoice_portion": 50,
 						"credit_days": 30,
@@ -307,26 +310,71 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 			}
 		).insert()
 
-		self.create_supplier(supplier_name="_Test AP Term Supplier")
-		pi = self._make_pi_with_terms(self.supplier, template.name)
-
+	def _term_filters(self, based_on_payment_terms):
 		filters = {
 			"company": self.company,
 			"party_type": "Supplier",
 			"party": [self.supplier],
 			"report_date": today(),
 			"range": "30, 60, 90, 120",
-			"based_on_payment_terms": 1,
 			"ageing_based_on": "Posting Date",
 		}
-		rows = [r for r in execute(filters)[1] if r.get("voucher_no") == pi.name]
+		if based_on_payment_terms:
+			filters["based_on_payment_terms"] = 1
+		return filters
+
+	def test_bulk_pay_term_invoice_both_terms_selected(self):
+		"""Filter ON: selecting both term rows -> 1 PE with 2 term references (real term names)."""
+		template = self._make_term_template()
+		self.create_supplier(supplier_name="_Test AP Term Supplier")
+		pi = self._make_pi_with_terms(self.supplier, template.name)
+
+		rows = [r for r in execute(self._term_filters(True))[1] if r.get("voucher_no") == pi.name]
 		self.assertEqual(len(rows), 2)  # report split by payment term
 
 		names = make_payment_entries({"company": self.company}, rows)
 		self.assertEqual(len(names), 1)
 		pe = frappe.get_doc("Payment Entry", names[0])
+		self.assertEqual(pe.docstatus, 0)
+		self.assertEqual(len(pe.references), 2)
+		self.assertEqual(
+			{r.payment_term for r in pe.references},
+			{self.payment_term1.name, self.payment_term2.name},
+		)
+		self.assertEqual(flt(sum(r.allocated_amount for r in pe.references)), 300)
+
+	def test_bulk_pay_term_invoice_single_term_selected(self):
+		"""Filter ON: selecting only one term row -> 1 PE with just that term referenced."""
+		template = self._make_term_template()
+		self.create_supplier(supplier_name="_Test AP Term Supplier One")
+		pi = self._make_pi_with_terms(self.supplier, template.name)
+
+		rows = [r for r in execute(self._term_filters(True))[1] if r.get("voucher_no") == pi.name]
+		first_term_row = sorted(rows, key=lambda r: r.get("due_date"))[0]
+
+		names = make_payment_entries({"company": self.company}, [first_term_row])
+		self.assertEqual(len(names), 1)
+		pe = frappe.get_doc("Payment Entry", names[0])
 		self.assertEqual(len(pe.references), 1)
-		self.assertEqual(flt(pe.references[0].allocated_amount), 300)
+		self.assertEqual(pe.references[0].payment_term, self.payment_term1.name)
+		self.assertEqual(flt(pe.references[0].allocated_amount), 150)
+
+	def test_bulk_pay_term_invoice_whole_invoice_selected(self):
+		"""Filter OFF: selecting the whole invoice (no term) -> 1 PE expanded to all terms."""
+		template = self._make_term_template()
+		self.create_supplier(supplier_name="_Test AP Term Supplier Whole")
+		pi = self._make_pi_with_terms(self.supplier, template.name)
+
+		rows = [r for r in execute(self._term_filters(False))[1] if r.get("voucher_no") == pi.name]
+		self.assertEqual(len(rows), 1)  # single invoice row, no payment_term
+		self.assertFalse(rows[0].get("payment_term"))
+
+		names = make_payment_entries({"company": self.company}, rows)
+		self.assertEqual(len(names), 1)
+		pe = frappe.get_doc("Payment Entry", names[0])
+		self.assertEqual(len(pe.references), 2)
+		self.assertTrue(all(r.payment_term for r in pe.references))
+		self.assertEqual(flt(sum(r.allocated_amount for r in pe.references)), 300)
 
 	def _make_pi_with_terms(self, supplier, template_name):
 		from erpnext.controllers.accounts_controller import get_payment_terms
