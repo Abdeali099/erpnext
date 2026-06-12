@@ -2790,6 +2790,127 @@ def get_payment_entry(
 	return pe
 
 
+@frappe.whitelist()
+def get_bulk_payment_entry(
+	company: str,
+	party_type: str,
+	party: str,
+	references: list[dict] | str,
+	party_account: str | None = None,
+):
+	"""
+	Return an unsaved draft Payment Entry paying multiple references of one party.
+
+	Unlike `get_payment_entry`, which builds a Payment Entry from a single document,
+	this accepts many references (Sales/Purchase Invoice or Journal Entry). Each reference:
+	- `reference_doctype` / `reference_name`
+	- `payment_term` (optional): pay only this term of the invoice
+	- `allocated_amount` (optional): pay this much, capped at the outstanding
+
+	Remaining details (exchange rates, base amounts, due dates) are filled by
+	`validate()` when the caller saves the returned document.
+	"""
+	if isinstance(references, str):
+		references = json.loads(references)
+
+	account_type = frappe.db.get_value("Party Type", party_type, "account_type")
+	payment_type = "Pay" if account_type == "Payable" else "Receive"
+	party_account = party_account or get_party_account(party_type, party, company)
+	party_account_currency = get_account_currency(party_account)
+	bank = get_bank_cash_account(frappe._dict(company=company), None) or frappe._dict()
+
+	pe = frappe.new_doc("Payment Entry")
+	pe.payment_type = payment_type
+	pe.company = company
+	pe.posting_date = nowdate()
+	pe.party_type = party_type
+	pe.party = party
+	pe.paid_from = party_account if payment_type == "Receive" else bank.account
+	pe.paid_to = party_account if payment_type == "Pay" else bank.account
+	pe.paid_from_account_currency = (
+		party_account_currency if payment_type == "Receive" else bank.account_currency
+	)
+	pe.paid_to_account_currency = party_account_currency if payment_type == "Pay" else bank.account_currency
+
+	for row in references:
+		row = frappe._dict(row)
+		details = get_reference_details(
+			row.reference_doctype, row.reference_name, party_account_currency, party_type, party
+		)
+		if flt(details.outstanding_amount) <= 0:
+			continue
+
+		row_references = _get_term_references(row, party_account_currency)
+		if row_references is None:  # not term-based: the row itself is the one reference
+			row_references = [
+				{
+					"reference_doctype": row.reference_doctype,
+					"reference_name": row.reference_name,
+					"outstanding_amount": details.outstanding_amount,
+					"allocated_amount": details.outstanding_amount,
+				}
+			]
+
+		for reference in row_references:
+			# a requested amount only applies when it maps to a single reference
+			if row.payment_term or not reference.get("payment_term"):
+				reference["allocated_amount"] = _capped_allocation(
+					row.allocated_amount, reference["allocated_amount"]
+				)
+			reference["account"] = details.get("account") or party_account
+			reference["exchange_rate"] = details.exchange_rate
+			pe.append("references", reference)
+
+	party_amount = sum(flt(d.allocated_amount) for d in pe.references)
+	base_amount = sum(flt(d.allocated_amount) * (flt(d.exchange_rate) or 1) for d in pe.references)
+	pe.paid_amount = party_amount if payment_type == "Receive" else base_amount
+	pe.received_amount = party_amount if payment_type == "Pay" else base_amount
+
+	return pe
+
+
+def _get_term_references(row, party_account_currency) -> list[dict] | None:
+	"""References of an invoice split by payment term — the requested term only, or all terms.
+
+	Returns None when the reference is not an invoice that allocates payments by payment
+	terms and no specific term was requested.
+	"""
+	if row.reference_doctype not in ("Sales Invoice", "Purchase Invoice"):
+		return None
+
+	template = frappe.db.get_value(row.reference_doctype, row.reference_name, "payment_terms_template")
+	allocate_by_terms = template and frappe.get_cached_value(
+		"Payment Terms Template", template, "allocate_payment_based_on_payment_terms"
+	)
+	if not (row.payment_term or allocate_by_terms):
+		return None
+
+	doc = frappe.get_doc(row.reference_doctype, row.reference_name)
+	grand_total, outstanding_amount = set_grand_total_and_outstanding_amount(
+		None, row.reference_doctype, party_account_currency, doc
+	)
+	references = get_reference_as_per_payment_terms(
+		doc.payment_schedule,
+		row.reference_doctype,
+		row.reference_name,
+		doc,
+		grand_total,
+		outstanding_amount,
+		party_account_currency,
+	)
+
+	if row.payment_term:
+		references = [ref for ref in references if ref["payment_term"] == row.payment_term]
+
+	return references
+
+
+def _capped_allocation(requested, outstanding) -> float:
+	"""Use the requested amount capped at the outstanding; default to the full outstanding."""
+	requested, outstanding = flt(requested), flt(outstanding)
+	return min(requested, outstanding) if requested > 0 else outstanding
+
+
 def get_open_payment_requests_for_references(references=None):
 	"""
 	Fetch all unpaid Payment Requests for the references. \n

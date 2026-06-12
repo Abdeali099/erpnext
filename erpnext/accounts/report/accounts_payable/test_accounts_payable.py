@@ -272,12 +272,12 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 			},
 		]
 		self.assertRaises(
-			frappe.ValidationError, make_payment_entries, self.company, invalid_rows
+			frappe.ValidationError, make_payment_entries, {"company": self.company}, invalid_rows
 		)
 
 	def _make_term_template(self):
-		# Two real Payment Terms sharing the SAME description (so the report's payment_term column
-		# shows identical text for both rows -> exercises the due_date-based term resolution).
+		# Two real Payment Terms sharing the SAME description: the report's payment_term column
+		# shows identical text for both rows, so only the row's real term name can identify them.
 		self.payment_term1 = frappe.get_doc(
 			{"doctype": "Payment Term", "payment_term_name": "_Test Bulk 50% on 15 Days"}
 		).insert()

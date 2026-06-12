@@ -51,7 +51,7 @@ $.extend(erpnext, {
 			fields.push(
 				"add_serial_batch_for_rejected_qty",
 				"rejected_serial_and_batch_bundle",
-				"rejected_serial_no"
+				"rejected_serial_no",
 			);
 		}
 
@@ -77,7 +77,7 @@ $.extend(erpnext, {
 				frm.fields_dict[child_name].grid.update_docfield_property(
 					field,
 					"in_list_view",
-					hide_fields ? 0 : 1
+					hide_fields ? 0 : 1,
 				);
 
 				if (
@@ -91,13 +91,13 @@ $.extend(erpnext, {
 					frm.fields_dict["supplied_items"].grid.update_docfield_property(
 						field,
 						"hidden",
-						hide_fields
+						hide_fields,
 					);
 
 					frm.fields_dict["supplied_items"].grid.update_docfield_property(
 						field,
 						"in_list_view",
-						hide_fields ? 0 : 1
+						hide_fields ? 0 : 1,
 					);
 				}
 			}
@@ -183,22 +183,22 @@ $.extend(erpnext.utils, {
 					__("Annual Billing: {0}", [
 						format_currency(
 							company_wise_info[0].billing_this_year,
-							company_wise_info[0].currency
+							company_wise_info[0].currency,
 						),
 					]),
-					"blue"
+					"blue",
 				);
 				frm.dashboard.add_indicator(
 					__("Total Unpaid: {0}", [
 						format_currency(company_wise_info[0].total_unpaid, company_wise_info[0].currency),
 					]),
-					company_wise_info[0].total_unpaid ? "orange" : "green"
+					company_wise_info[0].total_unpaid ? "orange" : "green",
 				);
 
 				if (company_wise_info[0].loyalty_points) {
 					frm.dashboard.add_indicator(
 						__("Loyalty Points: {0}", [company_wise_info[0].loyalty_points]),
-						"blue"
+						"blue",
 					);
 				}
 			}
@@ -225,7 +225,7 @@ $.extend(erpnext.utils, {
 					};
 					frappe.set_route("query-report", "Serial and Batch Summary");
 				},
-				__("View")
+				__("View"),
 			);
 		}
 	},
@@ -252,7 +252,7 @@ $.extend(erpnext.utils, {
 				'">Total Unpaid: ' +
 				format_currency(info.total_unpaid, info.currency) +
 				"</span></div>" +
-				"</div>"
+				"</div>",
 		).appendTo(frm.dashboard.stats_area_row);
 
 		if (info.loyalty_points) {
@@ -260,7 +260,7 @@ $.extend(erpnext.utils, {
 				'<div class="badge-link small" style="margin-bottom:10px"><span class="indicator blue">' +
 					"Loyalty Points: " +
 					info.loyalty_points +
-					"</span></div>"
+					"</span></div>",
 			).appendTo(indicator);
 		}
 
@@ -355,7 +355,7 @@ $.extend(erpnext.utils, {
 				!r.bold && // to avoid selecting exception rows which are usually in bold
 				r.voucher_no &&
 				allowed_voucher_types.includes(r.voucher_type) &&
-				flt(r.outstanding) > 0
+				flt(r.outstanding) > 0,
 		);
 
 		if (!rows.length) {
@@ -376,6 +376,7 @@ $.extend(erpnext.utils, {
 			voucher_no: r.voucher_no,
 			bill_no: r.bill_no,
 			payment_term: r.payment_term,
+			payment_term_name: r.payment_term_name,
 			due_date: r.due_date,
 			currency: r.currency,
 			outstanding: flt(r.outstanding),
@@ -749,7 +750,7 @@ erpnext.utils.select_alternate_items = function (opts) {
 									},
 									callback: (r) => {
 										this.grid_row.on_grid_fields_dict.actual_qty.set_value(
-											r.message || 0
+											r.message || 0,
 										);
 									},
 								});
@@ -783,7 +784,7 @@ erpnext.utils.select_alternate_items = function (opts) {
 									},
 									callback: (r) => {
 										this.grid_row.on_grid_fields_dict.actual_qty.set_value(
-											r.message || 0
+											r.message || 0,
 										);
 									},
 								});
@@ -954,7 +955,7 @@ erpnext.utils.update_child_items = function (opts) {
 								description,
 							} = r.message;
 							const row = dialog.fields_dict.trans_items.df.data.find(
-								(row) => row.name == me.doc.name
+								(row) => row.name == me.doc.name,
 							);
 							if (row) {
 								Object.assign(row, {
@@ -1082,7 +1083,7 @@ erpnext.utils.update_child_items = function (opts) {
 				in_list_view: 0,
 				label: __("Finished Good Item Qty"),
 				precision: get_precision("fg_item_qty"),
-			}
+			},
 		);
 	}
 
@@ -1109,9 +1110,9 @@ erpnext.utils.update_child_items = function (opts) {
 				this.hide();
 				frappe.confirm(
 					__(
-						"The reserved stock will be released when you update items. Are you certain you wish to proceed?"
+						"The reserved stock will be released when you update items. Are you certain you wish to proceed?",
 					),
-					() => this.update_items()
+					() => this.update_items(),
 				);
 			} else {
 				this.update_items();
@@ -1187,7 +1188,7 @@ erpnext.utils.map_current_doc = function (opts) {
 
 					if (already_set) {
 						frappe.msgprint(
-							__("You have already selected items from {0} {1}", [opts.source_doctype, src])
+							__("You have already selected items from {0} {1}", [opts.source_doctype, src]),
 						);
 						return;
 					}
@@ -1337,7 +1338,7 @@ $(document).on("app_ready", function () {
 				frappe.ui.form.on(d, "onload", function (frm) {
 					cur_frm.set_df_property("posting_time", "description", frappe.sys_defaults.time_zone);
 				});
-			}
+			},
 		);
 	}
 });
@@ -1412,7 +1413,7 @@ $(document).on("app_ready", function () {
 										message.msg +
 										"</span></span> " +
 										"</div>" +
-										"</div>"
+										"</div>",
 								);
 							} else {
 								set_time_to_resolve_and_response(frm, data.message.apply_sla_for_resolution);
@@ -1436,7 +1437,7 @@ $(document).on("app_ready", function () {
 							agreement_status.msg +
 							"</span></span> " +
 							"</div>" +
-							"</div>"
+							"</div>",
 					);
 				}
 			},
