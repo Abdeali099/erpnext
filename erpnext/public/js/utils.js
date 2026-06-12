@@ -365,7 +365,7 @@ $.extend(erpnext.utils, {
 			});
 		}
 
-		const company = report.get_filter_value("company");
+		const filters = report.get_values();
 
 		const reference_rows = rows.map((r) => ({
 			party: r.party,
@@ -450,9 +450,9 @@ $.extend(erpnext.utils, {
 			primary_action_label: __("Create"),
 			primary_action: (values) => {
 				frappe.call({
-					method: "erpnext.accounts.report.accounts_receivable.accounts_receivable.make_payment_entries_from_report",
+					method: "erpnext.accounts.report.accounts_receivable.accounts_receivable.make_payment_entries",
 					args: {
-						company: company,
+						filters: filters,
 						references: values.references,
 					},
 					freeze: true,

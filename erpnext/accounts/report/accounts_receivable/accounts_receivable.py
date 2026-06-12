@@ -1313,48 +1313,67 @@ class ReceivablePayableReport:
 		self.err_journals = [x[0] for x in results] if results else []
 
 
-# Voucher types that can be paid directly from the Receivable / Payable report.
-# Only Invoices can seed a Payment Entry; Journal Entries are supported as reference rows only.
-PAYABLE_VOUCHER_TYPES = ("Sales Invoice", "Purchase Invoice", "Journal Entry")
+# for creating Payment Entries from the report
+ALLOWED_VOUCHER_TYPES = ("Sales Invoice", "Purchase Invoice", "Journal Entry")
 INVOICE_VOUCHER_TYPES = ("Sales Invoice", "Purchase Invoice")
 
 
 @frappe.whitelist()
-def make_payment_entries_from_report(company: str, references: list | str):
-	"""Create draft Payment Entries from selected Accounts Receivable/Payable report rows.
+def make_payment_entries(filters: dict | str, references: list[dict] | str) -> list[str]:
+	"""
+	Create draft Payment Entries from rows selected in the AP / AR report.
 
-	Rows are grouped by (party_type, party, party_account, account_currency) so each draft
-	Payment Entry has a single party and a consistent account/currency. The actual Payment
-	Entry building is delegated to ``get_payment_entry`` / ``get_reference_details`` so all
-	currency, account and discount logic is inherited. Returns the list of created PE names.
+	Each reference must have at minimum:
+	- `voucher_type`: Sales/Purchase Invoice or Journal Entry
+	- `voucher_no`: document name
+	- `party_type` / `party`: e.g. "Customer" / "Acme Corp"
+	- `party_account` / `account_currency`: used to group rows into one PE per account
+	- `outstanding`: must be positive; rows with zero/negative are skipped
+	- `allocated_amount` (optional): cap the payment; defaults to full outstanding
+
+	Rows are grouped by (party_type, party, party_account, account_currency).
+
+	One draft Payment Entry is inserted per group.
+
+	Returns the list of created PE names.
 	"""
 	frappe.has_permission("Payment Entry", "create", throw=True)
+
+	if isinstance(filters, str):
+		filters = json.loads(filters)
+	filters = frappe._dict(filters)
+	company = filters.company
 
 	if isinstance(references, str):
 		references = json.loads(references)
 
-	valid_rows = _filter_payable_rows(references)
-	if not valid_rows:
-		frappe.throw(_("No valid invoice rows selected to create Payment Entries."))
+	valid_references = _filter_payable_references(references)
+
+	if not valid_references:
+		frappe.throw(
+			msg=_("No valid references to create Payment Entries from."),
+			title=_("No Valid References"),
+		)
 
 	payment_entries = []
-	for group in _group_report_rows(valid_rows).values():
+
+	for group in _group_report_references(valid_references).values():
 		pe = _build_payment_entry_for_group(company, group)
 		if pe:
 			pe.insert()
 			payment_entries.append(pe.name)
 
 	if payment_entries:
-		frappe.msgprint(
-			_("Created {0} draft Payment Entry(s): {1}").format(
-				len(payment_entries), get_filtered_list_link("Payment Entry", payment_entries)
-			),
-			title=_("Payment Entries Created"),
-			indicator="green",
-		)
+		link = get_filtered_list_link("Payment Entry", payment_entries, _("Click here to view"))
+		msg = (
+			_("Payment Entry created. {0}")
+			if len(payment_entries) == 1
+			else _("Payment Entries created. {0}")
+		).format(link)
+		frappe.msgprint(msg, title=_("Success"), indicator="green")
 	else:
 		frappe.msgprint(
-			_("No Payment Entries were created. The selected invoices may have no outstanding amount."),
+			_("No Payment Entries were created.<br> The selected invoices may have no outstanding amount."),
 			title=_("Nothing to Pay"),
 			indicator="orange",
 		)
@@ -1362,41 +1381,37 @@ def make_payment_entries_from_report(company: str, references: list | str):
 	return payment_entries
 
 
-def _filter_payable_rows(rows: list[dict]) -> list[frappe._dict]:
-	"""Keep only real, positive-outstanding invoice/JE rows.
-
-	Drops subtotal/total rows, credit/debit notes, standalone payments and advances, and any
-	voucher type we cannot pay (only Sales/Purchase Invoice and Journal Entry are allowed).
-	"""
+def _filter_payable_references(references: list):
 	valid = []
-	for row in rows:
+
+	for row in references:
 		row = frappe._dict(row)
-		if row.get("bold"):
-			# subtotal / total rows
+
+		if row.bold:  # subtotal / total rows
 			continue
-		if not (
-			row.get("voucher_no") and row.get("voucher_type") and row.get("party_type") and row.get("party")
-		):
+		if not (row.voucher_no and row.voucher_type and row.party_type and row.party):
 			continue
-		if row.voucher_type not in PAYABLE_VOUCHER_TYPES:
+		if row.voucher_type not in ALLOWED_VOUCHER_TYPES:
 			continue
 		if flt(row.get("outstanding")) <= 0:
-			# credit/debit notes, standalone payments and advances
 			continue
+
 		valid.append(row)
+
 	return valid
 
 
-def _group_report_rows(rows: list[frappe._dict]) -> "OrderedDict[tuple, list[frappe._dict]]":
-	"""Group rows so each group becomes one Payment Entry (single party + consistent account)."""
+def _group_report_references(references: list):
 	groups = OrderedDict()
-	for row in rows:
+
+	for row in references:
 		key = (row.party_type, row.party, row.get("party_account"), row.get("account_currency"))
 		groups.setdefault(key, []).append(row)
+
 	return groups
 
 
-def _dedupe_rows_by_voucher(rows: list[frappe._dict]) -> list[frappe._dict]:
+def _dedupe_rows_by_voucher(rows: list):
 	"""Collapse payment-term split rows (same voucher repeated) to one row per voucher."""
 	seen = OrderedDict()
 	for row in rows:
@@ -1404,14 +1419,7 @@ def _dedupe_rows_by_voucher(rows: list[frappe._dict]) -> list[frappe._dict]:
 	return list(seen.values())
 
 
-def _build_payment_entry_for_group(company: str, group: list[frappe._dict]):
-	"""Build one unsaved draft Payment Entry for a group of selected rows.
-
-	An Invoice in the group seeds the Payment Entry via ``get_payment_entry`` (which resolves
-	party/accounts/currency/exchange-rate). A Journal-Entry-only group is built from scratch
-	because ``get_payment_entry`` cannot seed from a Journal Entry. Every selected voucher is
-	then added as a reference row. Returns the Payment Entry, or ``None`` if nothing to pay.
-	"""
+def _build_payment_entry_for_group(company: str, group: list):
 	from erpnext.accounts.doctype.payment_entry.payment_entry import (
 		get_payment_entry,
 		get_reference_details,
@@ -1488,7 +1496,7 @@ def _build_payment_entry_for_group(company: str, group: list[frappe._dict]):
 def _new_payment_entry_for_journal_group(company: str, row: frappe._dict):
 	"""Build a bare Payment Entry for a group with no Invoice to seed from (Journal Entries only).
 
-	``get_payment_entry`` only knows how to seed from Invoices, so here we set the party, the
+	`get_payment_entry` only knows how to seed from Invoices, so here we set the party, the
 	party account (from the row) and a default bank/cash account by hand. References are added
 	by the caller.
 	"""

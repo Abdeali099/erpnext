@@ -4,7 +4,7 @@ from frappe.utils import add_days, flt, today
 from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import make_purchase_invoice
 from erpnext.accounts.report.accounts_payable.accounts_payable import execute
 from erpnext.accounts.report.accounts_receivable.accounts_receivable import (
-	make_payment_entries_from_report,
+	make_payment_entries,
 )
 from erpnext.accounts.test.accounts_mixin import AccountsTestMixin
 from erpnext.tests.utils import ERPNextTestSuite
@@ -207,7 +207,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 		pi2 = self._make_pi(self.supplier)
 
 		rows = [r for r in self._ap_report_rows(self.supplier) if r.get("voucher_no") in (pi1.name, pi2.name)]
-		names = make_payment_entries_from_report(self.company, rows)
+		names = make_payment_entries({"company": self.company}, rows)
 
 		self.assertEqual(len(names), 1)
 		pe = frappe.get_doc("Payment Entry", names[0])
@@ -229,7 +229,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 
 		wanted = {pi_a1.name, pi_a2.name, pi_b1.name}
 		rows = [r for r in self._ap_report_rows() if r.get("voucher_no") in wanted]
-		names = make_payment_entries_from_report(self.company, rows)
+		names = make_payment_entries({"company": self.company}, rows)
 
 		self.assertEqual(len(names), 2)
 		by_party = {frappe.db.get_value("Payment Entry", n, "party"): n for n in names}
@@ -246,7 +246,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 
 		wanted = {pi_usd.name, pi_inr.name}
 		rows = [r for r in self._ap_report_rows(self.supplier) if r.get("voucher_no") in wanted]
-		names = make_payment_entries_from_report(self.company, rows)
+		names = make_payment_entries({"company": self.company}, rows)
 
 		self.assertEqual(len(names), 2)
 		for n in names:
@@ -272,7 +272,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 			},
 		]
 		self.assertRaises(
-			frappe.ValidationError, make_payment_entries_from_report, self.company, invalid_rows
+			frappe.ValidationError, make_payment_entries, self.company, invalid_rows
 		)
 
 	def test_bulk_pay_collapses_payment_term_split_rows(self):
@@ -322,7 +322,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 		rows = [r for r in execute(filters)[1] if r.get("voucher_no") == pi.name]
 		self.assertEqual(len(rows), 2)  # report split by payment term
 
-		names = make_payment_entries_from_report(self.company, rows)
+		names = make_payment_entries({"company": self.company}, rows)
 		self.assertEqual(len(names), 1)
 		pe = frappe.get_doc("Payment Entry", names[0])
 		self.assertEqual(len(pe.references), 1)
@@ -358,7 +358,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 		rows = [r for r in self._ap_report_rows(self.supplier) if r.get("voucher_no") == pi.name]
 		rows[0]["allocated_amount"] = 100  # pay only part of the 300 outstanding
 
-		names = make_payment_entries_from_report(self.company, rows)
+		names = make_payment_entries({"company": self.company}, rows)
 		self.assertEqual(len(names), 1)
 		pe = frappe.get_doc("Payment Entry", names[0])
 		self.assertEqual(flt(pe.references[0].allocated_amount), 100)
@@ -385,7 +385,7 @@ class TestAccountsPayable(ERPNextTestSuite, AccountsTestMixin):
 			"range": "30, 60, 90, 120",
 		}
 		rows = [r for r in ar_execute(filters)[1] if r.get("voucher_no") == si.name]
-		names = make_payment_entries_from_report(self.company, rows)
+		names = make_payment_entries({"company": self.company}, rows)
 
 		self.assertEqual(len(names), 1)
 		pe = frappe.get_doc("Payment Entry", names[0])
